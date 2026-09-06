@@ -1,2 +1,3 @@
 PySide6>=6.6,<6.7
 requests>=2.31
+pypinyin>=0.49.0

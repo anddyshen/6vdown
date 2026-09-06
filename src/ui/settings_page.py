@@ -6,10 +6,10 @@ import time
 
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QGroupBox,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QScrollArea, QSpinBox, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .. import constants
@@ -32,6 +32,48 @@ def _ts(ms: int) -> str:
     if not ms:
         return ""
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ms / 1000))
+
+
+class MirrorDialog(QDialog):
+    """新增 / 编辑镜像：地址 + 备注 + 启用。"""
+
+    def __init__(self, mirror=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("编辑镜像" if mirror else "添加镜像")
+        self.setMinimumWidth(480)
+        self.result_mirror = None
+        form = QFormLayout(self)
+        self.edit_url = QLineEdit(mirror.url if mirror else "")
+        self.edit_url.setPlaceholderText("https://www.example.com/")
+        form.addRow("镜像地址", self.edit_url)
+        self.edit_note = QLineEdit((mirror.note or "") if mirror else "")
+        form.addRow("备注（可选）", self.edit_note)
+        self.chk_enabled = QCheckBox("启用该镜像（参与检测与解析轮换）")
+        self.chk_enabled.setChecked(bool(mirror.enabled) if mirror else True)
+        form.addRow("", self.chk_enabled)
+        btns = QHBoxLayout()
+        ok = QPushButton("确定")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self._accept)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        btns.addStretch(1)
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+        form.addRow(btns)
+
+    def _accept(self) -> None:
+        url = (self.edit_url.text() or "").strip()
+        if not url:
+            QMessageBox.warning(self, "提示", "请输入镜像地址")
+            return
+        if "://" not in url:
+            url = "https://" + url
+        self.result_mirror = MirrorSite(
+            url=url.rstrip("/") + "/",
+            enabled=self.chk_enabled.isChecked(),
+            note=(self.edit_note.text() or "").strip())
+        self.accept()
 
 
 class SettingsPage(QWidget):
@@ -209,22 +251,30 @@ class SettingsPage(QWidget):
         lay.addWidget(self.mirror_table)
         row = QHBoxLayout()
         for text, fn in (("添加域名", self._mirror_add), ("设为当前", self._mirror_current),
-                         ("删除", self._mirror_del)):
+                         ("编辑", self._mirror_edit_sel), ("删除", self._mirror_del)):
             b = QPushButton(text)
             b.clicked.connect(lambda _=False, f=fn: f())
             row.addWidget(b)
         row.addStretch(1)
-        b_probe = QPushButton("检测全部可用性")
-        b_probe.clicked.connect(lambda: self.ctl.detect_mirrors(False))
-        row.addWidget(b_probe)
-        b_disc = QPushButton("从发布页发现新域名")
-        b_disc.clicked.connect(lambda: self.ctl.detect_mirrors(True))
-        row.addWidget(b_disc)
+        self.btn_probe = QPushButton("检测全部可用性")
+        self.btn_probe.clicked.connect(lambda: self.ctl.detect_mirrors(False))
+        row.addWidget(self.btn_probe)
+        self.btn_discover = QPushButton("从发布页发现新域名")
+        self.btn_discover.clicked.connect(lambda: self.ctl.detect_mirrors(True))
+        row.addWidget(self.btn_discover)
         lay.addLayout(row)
         self.mirror_log = QLabel("")
         self.mirror_log.setStyleSheet("color:#888; font-size:12px;")
         self.mirror_log.setWordWrap(True)
         lay.addWidget(self.mirror_log)
+        self.probe_bar = QProgressBar()
+        self.probe_bar.setRange(0, 0)
+        self.probe_bar.setTextVisible(False)
+        self.probe_bar.setFixedHeight(10)
+        self.probe_bar.hide()
+        lay.addWidget(self.probe_bar)
+        self.mirror_table.itemDoubleClicked.connect(
+            lambda _it: self._mirror_edit_sel())
         return g
 
     def reload_mirrors(self) -> None:
@@ -254,17 +304,60 @@ class SettingsPage(QWidget):
         r = sel[0].row()
         return mirrors[r] if r < len(mirrors) else None
 
-    def _mirror_add(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
+    @staticmethod
+    def _norm_url(raw: str) -> str:
+        raw = re.sub(r"^[\s\"']+|[\s\"']+$", "", raw or "")
+        if "://" not in raw:
+            raw = "https://" + raw
+        return raw.rstrip("/") + "/"
 
-        url, ok = QInputDialog.getText(self, "添加域名", "镜像地址（如 https://www.6v520.cc/）")
-        if not ok or not (url or "").strip():
+    def _mirror_add(self) -> None:
+        dlg = MirrorDialog(None, self)
+        if dlg.exec() and dlg.result_mirror:
+            m = dlg.result_mirror
+            m.url = self._norm_url(m.url)
+            self.db.upsert_mirror(m)
+            self.reload_mirrors()
+
+    def _mirror_edit_sel(self) -> None:
+        m = self._selected_mirror()
+        if not m:
+            QMessageBox.information(self, "提示", "请先选中一行镜像")
             return
-        url = re.sub(r"^[\s\"']+|[\s\"']+$", "", url)
-        if "://" not in url:
-            url = "https://" + url
-        self.db.upsert_mirror(MirrorSite(url=url.rstrip("/") + "/", enabled=True))
+        self._mirror_edit(m)
+
+    def _mirror_edit(self, m) -> None:
+        dlg = MirrorDialog(m, self)
+        if not (dlg.exec() and dlg.result_mirror):
+            return
+        nm = dlg.result_mirror
+        nm.id = m.id
+        nm.url = self._norm_url(nm.url)
+        old_url = m.url
+        was_current = bool(m.is_current)
+        nm.is_current = was_current
+        nm.status = m.status
+        nm.checked_at = m.checked_at
+        try:
+            self.db.update_mirror(nm)
+        except ValueError as e:
+            QMessageBox.warning(self, "无法保存", str(e))
+            return
+        if was_current and nm.url != old_url:
+            self.db.set_current_mirror(nm.url)
         self.reload_mirrors()
+
+    def set_mirror_busy(self, busy: bool) -> None:
+        busy = bool(busy)
+        if busy:
+            self.probe_bar.show()
+            self.mirror_log.setText("正在检测镜像可用性，请稍候……")
+        else:
+            self.probe_bar.hide()
+        for b in (getattr(self, "btn_probe", None),
+                  getattr(self, "btn_discover", None)):
+            if b is not None:
+                b.setEnabled(not busy)
 
     def _mirror_current(self) -> None:
         m = self._selected_mirror()
@@ -395,7 +488,7 @@ class SettingsPage(QWidget):
         self.db.clear_parse_data()
         try:
             wb = self.ctl.window.workbench
-            wb.load_items([])
+            wb.load_items([], mark_new=[])
             wb.set_status("解析数据已重置 · 等待下一次全量解析")
         except Exception:
             pass

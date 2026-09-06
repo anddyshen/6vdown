@@ -382,7 +382,7 @@ class Controller(QObject):
         worker.log.connect(self.settings_page.set_mirror_log)
         worker.done.connect(self._on_probe_done)
         self._probe = worker
-        self.settings_page.set_mirror_log("开始检测镜像可用性……")
+        self.settings_page.set_mirror_busy(True)
         worker.start()
 
     def _on_probe_done(self, result: dict) -> None:
@@ -398,6 +398,7 @@ class Controller(QObject):
         cur = self.db.current_mirror_url()
         self.settings_page.set_mirror_log(
             f"检测完成：可用 {ok_count}/{len(result)}。当前解析源：{cur}")
+        self.settings_page.set_mirror_busy(False)
         self.notify_tip("镜像检测完成",
                         f"可用 {ok_count}/{len(result)}，已自动选择可用域名。")
 

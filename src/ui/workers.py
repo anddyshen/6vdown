@@ -109,9 +109,18 @@ class MirrorProbeWorker(QThread):
         from ..site import mirrors as mm
 
         result = {}
-        for i, url in enumerate(self._urls, 1):
-            self.log.emit(f"探测 {i}/{len(self._urls)}  {url}")
-            ok, note, length = mm.probe_mirrors([url])[url]
-            result[url] = (ok, note, length)
-            self._db.mark_mirror(url, ok, note)
+        try:
+            for i, url in enumerate(self._urls, 1):
+                self.log.emit(f"探测 {i}/{len(self._urls)}  {url}")
+                try:
+                    ok, note, length = mm.probe_mirrors([url])[url]
+                except Exception as e:  # 单个镜像异常不中断整体
+                    ok, note, length = False, f"{type(e).__name__}: {e}", 0
+                result[url] = (ok, note, length)
+                try:
+                    self._db.mark_mirror(url, ok, note)
+                except Exception:
+                    pass
+        except Exception as e:  # 保证 done 一定会发出，界面 busy 状态可被清除
+            self.log.emit(f"探测异常：{type(e).__name__}: {e}")
         self.done.emit(result)

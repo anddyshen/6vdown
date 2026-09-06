@@ -168,6 +168,18 @@ class Database:
             )
             return int(cur.lastrowid)
 
+    def update_mirror(self, m: MirrorSite) -> None:
+        """按 id 更新镜像（地址/备注/启用），current/status 保持不变。"""
+        with self._lock, self._conn() as c:
+            dup = c.execute(
+                "SELECT id FROM mirror_sites WHERE url=? AND id<>?",
+                (m.url, m.id)).fetchone()
+            if dup:
+                raise ValueError("该镜像地址已存在")
+            c.execute(
+                "UPDATE mirror_sites SET url=?, enabled=?, note=? WHERE id=?",
+                (m.url, int(bool(m.enabled)), m.note or "", m.id))
+
     def delete_mirror(self, mid: int) -> None:
         with self._lock, self._conn() as c:
             c.execute("DELETE FROM mirror_sites WHERE id=?", (mid,))

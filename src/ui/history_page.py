@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..models import now_str, task_from_row
+from ..pinyin_search import match as py_match
 
 
 class HistoryPage(QWidget):
@@ -30,8 +31,9 @@ class HistoryPage(QWidget):
         root = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索标题 / 链接 / 主机……")
-        self.search.returnPressed.connect(self.refresh)
+        self.search.setPlaceholderText("搜索标题 / 链接 / 主机（支持拼音首字母）……")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.refresh)
         bar.addWidget(self.search, 1)
         btn_find = QPushButton("查询")
         btn_find.clicked.connect(self.refresh)
@@ -70,7 +72,9 @@ class HistoryPage(QWidget):
     # -------------------------------------------------------------
     def refresh(self) -> None:
         kw = self.search.text().strip()
-        tasks = self._db.list_tasks(limit=800, keyword=kw)
+        all_tasks = self._db.list_tasks(limit=2000)
+        tasks = [t for t in all_tasks if self._hit(t, kw)] if kw else all_tasks
+        self._all_count = len(all_tasks)
         self._tasks = tasks
         self.table.setRowCount(0)
         self.table.setRowCount(len(tasks))
@@ -89,11 +93,16 @@ class HistoryPage(QWidget):
             link_item = QTableWidgetItem(t.link[:120] if t.link else "")
             link_item.setToolTip(f"{t.link}\n{t.message}")
             self.table.setItem(row, 6, link_item)
-        self.count_label.setText(f"{len(tasks)} 条")
+        self.count_label.setText(f"筛选 {len(tasks)} / 共 {self._all_count} 条")
         if not tasks:
+            msg = "（暂无记录）" if not all_tasks else "（无匹配记录）"
             self.table.setRowCount(1)
-            self.table.setItem(0, 0, QTableWidgetItem("（暂无记录）"))
+            self.table.setItem(0, 0, QTableWidgetItem(msg))
             self.table.setSpan(0, 0, 1, 7)
+
+    @staticmethod
+    def _hit(t, kw: str) -> bool:
+        return py_match([t.title, t.link, t.host_name, _src(t.source), t.message], kw)
 
     def selected_tasks(self) -> list:
         rows = sorted({i.row() for i in self.table.selectedItems()})

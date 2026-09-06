@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..models import ParseItem
+from ..pinyin_search import match as py_match
 from .icons import star_pixmap
 
 COL_SEL, COL_STAR, COL_TITLE, COL_BLOCK, COL_DATE, COL_MAG, COL_OP = range(7)
@@ -267,6 +269,7 @@ class WorkbenchPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list = []
+        self._base_items: list = []
         self._row_index: dict = {}
         self._mark_new: set = set()
         self.on_magnet_list = None
@@ -294,6 +297,16 @@ class WorkbenchPage(QWidget):
         self.btn_parse.clicked.connect(self._on_parse)
         bar.addWidget(self.btn_parse)
         root.addLayout(bar)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("筛选："))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(
+            "输入标题关键词或拼音首字母过滤（如 dy = 电影）……")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._on_search_changed)
+        search_row.addWidget(self.search_edit, 1)
+        root.addLayout(search_row)
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableWidget(0, COL_OP + 1)
@@ -385,6 +398,10 @@ class WorkbenchPage(QWidget):
         """
         if mark_new is not None:
             self._mark_new = {str(u) for u in mark_new if u}
+            self._base_items = list(items)
+            q = (self.search_edit.text() or "").strip().lower()
+            if q:
+                items = [it for it in items if self._match_item(it, q)]
         new_set = self._mark_new
         if mark_new is not None and new_set:
             def is_fresh(it):
@@ -480,6 +497,28 @@ class WorkbenchPage(QWidget):
         self._update_selected_count()
         if summary:
             self._show_summary(summary)
+
+    @staticmethod
+    def _visible_text(it) -> str:
+        """构造与该行“电影名称/简介”单元格完全一致的可见文本。"""
+        title = it.title or "(无标题)"
+        if it.error:
+            title += "  ⚠"
+        desc_line = (it.desc or "").replace("\n", " ")[:160]
+        if it.magnets:
+            desc_line += f"（{len(it.magnets)} 个磁力）"
+        return title if not desc_line else f"{title}\n{desc_line}"
+
+    def _match_item(self, it, q: str) -> bool:
+        return py_match([self._visible_text(it)], q)
+
+    def _on_search_changed(self, text: str) -> None:
+        q = (text or "").strip().lower()
+        base = getattr(self, "_base_items", None)
+        if base is None:
+            return
+        items = [it for it in base if self._match_item(it, q)] if q else list(base)
+        self.load_items(items)
 
     def restore_new_first(self) -> None:
         """Restore display to fresh-first highlighted order."""
