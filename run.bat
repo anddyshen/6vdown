@@ -3,7 +3,7 @@ setlocal
 cd /d %~dp0
 
 echo ============================================
-echo  C2Down launcher (install deps then run)
+echo  6vdown launcher (install deps then run)
 echo ============================================
 
 echo.
@@ -17,7 +17,7 @@ if errorlevel 1 (
 if errorlevel 1 goto :err
 
 echo.
-echo [2/2] Starting C2Down ...
+echo [2/2] Starting 6vdown ...
 python main.py
 if errorlevel 1 goto :err
 

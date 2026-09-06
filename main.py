@@ -1,4 +1,4 @@
-"""C2Down 入口。
+"""6vdown 入口。
 
 用法：
     python main.py                 # 启动图形界面
@@ -13,10 +13,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def _headless_parse() -> int:
-    from c2down.config import Config
-    from c2down.database import Database
-    from c2down.site.fetcher import SiteFetcher
-    from c2down.site.service import SiteParseService
+    from src.config import Config
+    from src.database import Database
+    from src.site.fetcher import SiteFetcher
+    from src.site.service import SiteParseService
 
     db = Database()
     cfg = Config()
@@ -33,7 +33,7 @@ def _headless_parse() -> int:
 def main() -> None:
     if "--parse-headless" in sys.argv:
         sys.exit(_headless_parse())
-    from c2down.app import run
+    from src.app import run
 
     sys.exit(run())
 

@@ -3,7 +3,7 @@ setlocal
 cd /d %~dp0
 
 echo ============================================
-echo  C2Down launcher (isolated venv)
+echo  6vdown launcher (isolated venv)
 echo ============================================
 
 if not exist ".venv-run\Scripts\python.exe" (
@@ -25,7 +25,7 @@ echo [2/3] Verifying PySide6 import ...
 ".venv-run\Scripts\python.exe" -c "import PySide6.QtCore; print('PySide6 OK')"
 if errorlevel 1 goto :err
 
-echo [3/3] Starting C2Down ...
+echo [3/3] Starting 6vdown ...
 ".venv-run\Scripts\python.exe" main.py
 if errorlevel 1 goto :err
 

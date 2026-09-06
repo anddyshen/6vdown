@@ -8,7 +8,7 @@ if exist ".venv-run\Scripts\python.exe" set "PY=.venv-run\Scripts\python.exe"
 echo Python : %PY%
 
 echo ============================================
-echo  C2Down one-file build script
+echo  6vdown one-file build script
 echo ============================================
 echo.
 
@@ -28,24 +28,24 @@ if errorlevel 1 (
 )
 if errorlevel 1 goto :err
 
-echo [3/5] Generating icon (assets\c2down.ico) ...
+echo [3/5] Generating icon (assets\6vdown.ico) ...
 %PY% tools\gen_icon.py
 if errorlevel 1 goto :err
 
 echo [4/5] Cleaning old outputs ...
 if exist build rmdir /s /q build
-if exist dist\C2Down.exe del /q dist\C2Down.exe
+if exist dist\6vdown.exe del /q dist\6vdown.exe
 
 echo [5/5] PyInstaller one-file build (may take minutes) ...
 %PY% -m PyInstaller --noconfirm --clean --windowed --onefile ^
-  --name C2Down ^
-  --icon assets\c2down.ico ^
+  --name 6vdown ^
+  --icon assets\6vdown.ico ^
   --exclude-module tkinter ^
   main.py
 if errorlevel 1 goto :err
 
 echo.
-echo Build OK: dist\C2Down.exe
+echo Build OK: dist\6vdown.exe
 pause
 exit /b 0
 

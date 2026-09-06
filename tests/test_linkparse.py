@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from c2down.linkparse import parse_text, classify_http, magnet_hash  # noqa: E402
+from src.linkparse import parse_text, classify_http, magnet_hash  # noqa: E402
 
 M1 = ("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
       "&dn=Test+Movie&tr=http://tracker.example.com:8080/announce")

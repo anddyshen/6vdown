@@ -7,7 +7,7 @@ import sys
 from . import constants
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-VALUE_NAME = "C2Down"
+VALUE_NAME = "6vdown"
 
 
 def is_frozen_app() -> bool:

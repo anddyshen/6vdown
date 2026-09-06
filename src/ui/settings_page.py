@@ -310,7 +310,7 @@ class SettingsPage(QWidget):
         self.toast_spin.setRange(2, 60)
         self.toast_spin.setSuffix(" 秒")
         form.addRow("弹窗停留时长", self.toast_spin)
-        self.chk_boot = QCheckBox("开机自动启动 C2Down")
+        self.chk_boot = QCheckBox("开机自动启动 6vdown")
         form.addRow("", self.chk_boot)
         self.parse_default_combo = NoWheelComboBox()
         for key, lab in (("ask", "每次询问"),

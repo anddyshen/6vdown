@@ -20,11 +20,11 @@ except Exception:
 
 
 def main() -> None:
-    from c2down.config import Config
-    from c2down.database import Database
-    from c2down.site.fetcher import SiteFetcher
-    from c2down.site.parser import _A_RE, _HREF_RE, HomeParser
-    from c2down.site.service import SiteParseService
+    from src.config import Config
+    from src.database import Database
+    from src.site.fetcher import SiteFetcher
+    from src.site.parser import _A_RE, _HREF_RE, HomeParser
+    from src.site.service import SiteParseService
 
     db = Database()
     cfg = Config()

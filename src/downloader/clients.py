@@ -10,7 +10,7 @@ from ..log import get_logger
 from .base import BaseClient, SendResult
 
 log = get_logger("downloader")
-_UA = "C2Down/0.1 (magnet helper)"
+_UA = "6vdown/0.1 (magnet helper)"
 
 
 def _err(e: Exception, where: str = "") -> SendResult:
@@ -139,7 +139,7 @@ class Aria2Client(BaseClient):
         return args
 
     def _call(self, method: str, args: list, timeout: int) -> SendResult:
-        payload = {"jsonrpc": "2.0", "id": "c2down", "method": method,
+        payload = {"jsonrpc": "2.0", "id": "6vdown", "method": method,
                    "params": self._params(args)}
         resp = requests.post(f"{self.base}{self.rpc_path}",
                              data=json.dumps(payload), timeout=timeout,

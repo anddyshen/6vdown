@@ -112,12 +112,12 @@ class Controller(QObject):
         self.act_notify.toggled.connect(self._set_notify_enabled)
         self.menu.addAction(self.act_notify)
         self.menu.addSeparator()
-        aq = QAction("退出 C2Down", self.menu)
+        aq = QAction("退出 6vdown", self.menu)
         aq.triggered.connect(self.quit)
         self.menu.addAction(aq)
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._on_tray_activated)
-        self.tray.setToolTip("C2Down · 电影站下载解析器")
+        self.tray.setToolTip("6vdown · 电影站下载解析器")
         self.tray.show()
 
     def _on_tray_activated(self, reason) -> None:
@@ -138,8 +138,8 @@ class Controller(QObject):
         icon = app_icon(gray=flag)
         self.window.setWindowIcon(icon)
         self.tray.setIcon(icon)
-        self.tray.setToolTip("C2Down · 已禁用（图标灰色）" if flag
-                             else "C2Down · 电影站下载解析器")
+        self.tray.setToolTip("6vdown · 已禁用（图标灰色）" if flag
+                             else "6vdown · 电影站下载解析器")
 
     # ------------------------------------------------------------ 剪贴板
     def on_clipboard_changed(self) -> None:

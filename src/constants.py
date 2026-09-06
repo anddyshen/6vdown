@@ -16,8 +16,8 @@ def project_root() -> str:
 def app_data_dir() -> str:
     """数据目录（绿色模式）：数据跟随程序所在目录。
 
-    - exe：与 C2Down.exe 同级的 data\\ 目录（拷贝整个目录即便携迁移）；
-    - 若 exe 所在目录不可写（如 Program Files），回退 %APPDATA%\\C2Down；
+    - exe：与 6vdown.exe 同级的 data\\ 目录（拷贝整个目录即便携迁移）；
+    - 若 exe 所在目录不可写（如 Program Files），回退 %APPDATA%\\6vdown；
     - 源码运行：项目 data\\ 目录。
     """
     if is_frozen():
@@ -32,7 +32,7 @@ def app_data_dir() -> str:
         except Exception:
             pass
         ap = os.environ.get("APPDATA") or os.path.expanduser("~")
-        base = os.path.join(ap, "C2Down")
+        base = os.path.join(ap, "6vdown")
     else:
         base = os.path.join(project_root(), "data")
     os.makedirs(base, exist_ok=True)
@@ -42,11 +42,11 @@ def app_data_dir() -> str:
 def legacy_data_dir() -> str:
     """旧版（%APPDATA%）数据目录，用于首次启动自动迁移。"""
     ap = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(ap, "C2Down")
+    return os.path.join(ap, "C2Down")  # legacy old-version dir
 
 
 def db_path() -> str:
-    return os.path.join(app_data_dir(), "c2down.db")
+    return os.path.join(app_data_dir(), "6vdown.db")
 
 
 def config_path() -> str:

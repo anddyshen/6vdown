@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from c2down.site.parser import (  # noqa: E402
+from src.site.parser import (  # noqa: E402
     HomeParser,
     parse_detail_desc,
     parse_detail_magnets,

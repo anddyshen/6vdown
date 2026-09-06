@@ -1,4 +1,4 @@
-# C2Down · 电影站下载解析器（Windows 桌面版）
+# 6vdown · 电影站下载解析器（Windows 桌面版）
 
 > 一个常驻系统托盘的 Windows 桌面工具：自动解析剪贴板中的磁力 / PT / http 链接并
 > 推送到 qBittorrent / Transmission / Aria2；可解析电影资源站（默认 https://www.hao6v.cc/）
@@ -106,14 +106,16 @@ python -m unittest discover -s tests -p "test_*.py"   # 单元测试
 
 ### 打包 exe
 ```powershell
-build.bat        # 输出 dist\C2Down.exe（PyInstaller --onefile --windowed，含自定义图标）
+build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，含自定义图标）
 ```
 
 ### 绿色便携
-- 将 `C2Down.exe` 放入任意文件夹双击运行，exe 同级会自动生成 `data\`（数据库/配置/缓存）；
+- 将 `6vdown.exe` 放入任意文件夹双击运行，exe 同级会自动生成 `data\`（数据库/配置/缓存）；
 - 把整个文件夹拷贝到其它电脑或目录即可直接使用，**数据随目录走**；
-- 若 exe 位于不可写目录（如 Program Files）或便携介质只读，自动回退到 `%APPDATA%\C2Down`；
-- 由旧版升级时，首次启动会自动把 `%APPDATA%\C2Down` 数据迁移到 exe 同级 `data\`。---
+- 若 exe 位于不可写目录（如 Program Files）或便携介质只读，自动回退到 `%APPDATA%\6vdown`；
+- Upgrade note: legacy `%APPDATA%\6vdown` data and the old `data\6vdown.db` are auto-migrated/renamed on first run after this update; history and cache are kept.
+
+----
 
 ## 架构
 
@@ -126,7 +128,7 @@ build.bat        # 输出 dist\C2Down.exe（PyInstaller --onefile --windowed，�
 │ site/fetcher + site/parser + site/mirrors + site/service    │
 │ downloader/manager + clients（qB / Transmission / Aria2）   │
 ├─ 数据层 ────────────────────────────────────────────────────┤
-│ SQLite（c2down.db） · config.json · cache/ · 日志          │
+│ SQLite（6vdown.db） · config.json · cache/ · 日志          │
 └──────────────────────────────────────────────────────────────┘
 任务线程：ParseWorker(QThread) · SendRunnable/TestHostRunnable(线程池) · MirrorProbeWorker
 ```
@@ -135,25 +137,25 @@ build.bat        # 输出 dist\C2Down.exe（PyInstaller --onefile --windowed，�
 
 | 模块 | 职责 |
 |---|---|
-| `c2down/app.py` | 入口：主题、单实例锁、绿色数据目录与旧数据迁移 |
-| `c2down/controller.py` | 编排：托盘、剪贴板/拖拽、发送、解析任务、通知、启动状态 |
-| `c2down/database.py` | SQLite：主机、镜像、解析缓存、历史、运行记录 |
-| `c2down/site/fetcher.py` | 抓取与解码（GBK/UTF-8 自适应） |
-| `c2down/site/parser.py` | 首页区块/日期/星标规则与详情页磁力提取 |
-| `c2down/site/mirrors.py` | 镜像可用性探测与发布页发现 |
-| `c2down/site/service.py` | 镜像容灾→解析→增量→补抓→落库（可复用/可测试） |
-| `c2down/downloader/` | qB/TR/Aria2 三客户端与统一发送管理 |
-| `c2down/ui/` | 各界面页、拖拽窗、托盘、渐变弹窗、主题、后台任务封装 |
+| `src/app.py` | 入口：主题、单实例锁、绿色数据目录与旧数据迁移 |
+| `src/controller.py` | 编排：托盘、剪贴板/拖拽、发送、解析任务、通知、启动状态 |
+| `src/database.py` | SQLite：主机、镜像、解析缓存、历史、运行记录 |
+| `src/site/fetcher.py` | 抓取与解码（GBK/UTF-8 自适应） |
+| `src/site/parser.py` | 首页区块/日期/星标规则与详情页磁力提取 |
+| `src/site/mirrors.py` | 镜像可用性探测与发布页发现 |
+| `src/site/service.py` | 镜像容灾→解析→增量→补抓→落库（可复用/可测试） |
+| `src/downloader/` | qB/TR/Aria2 三客户端与统一发送管理 |
+| `src/ui/` | 各界面页、拖拽窗、托盘、渐变弹窗、主题、后台任务封装 |
 | `tests/` | 链接解析、首页归属、星标、详情磁力/分集、简介提取等单测 |
 
 ## 数据文件
 
 | 文件 | 说明 |
 |---|---|
-| `data\c2down.db` | `download_hosts` / `mirror_sites` / `parse_records` / `parse_runs` / `task_log` / `settings` |
+| `data\6vdown.db` | `download_hosts` / `mirror_sites` / `parse_records` / `parse_runs` / `task_log` / `settings` |
 | `data\config.json` | 应用配置（主题、默认解析操作、启动行为、区块勾选、通知等） |
 | `data\cache\` | 首页/详情页抓取副本，用于排查解析问题 |
-| `data\c2down.log` | 运行日志 |
+| `data\6vdown.log` | 运行日志 |
 ---
 
 ## 常见问题（FAQ）
@@ -165,7 +167,7 @@ build.bat        # 输出 dist\C2Down.exe（PyInstaller --onefile --windowed，�
 3. **托盘图标变灰后点“发送”还有弹窗？** 已拆分为两个开关：图标变灰仅表示“剪贴板监听”暂停；
    弹窗提示由“弹窗提示”独立控制。
 4. **没有任何右下角弹窗？** 检查托盘“弹窗提示”或设置页“右下角提醒”总开关是否被关闭。
-5. **数据存在哪里？** 绿色版：exe 同级 `data\`；目录不可写时自动回退 `%APPDATA%\C2Down`。
+5. **数据存在哪里？** 绿色版：exe 同级 `data\`；目录不可写时自动回退 `%APPDATA%\6vdown`。
    设置页提供“打开数据目录”按钮直达。
 6. **启动报 Qt DLL 加载失败？** 多为 Anaconda + 新版 PySide6 兼容问题：请用 `.venv-run` 并按
    `requirements.txt` 安装 PySide6 6.6.x（见“运行与打包”）。
@@ -174,6 +176,7 @@ build.bat        # 输出 dist\C2Down.exe（PyInstaller --onefile --windowed，�
 ---
 
 ## 版本变更记录
+- rename: product 6vdown -> 6vdown; source package directory 6vdown -> src.
 
 - **v0.6.5**：拆分“剪贴板监听”与“弹窗提示”两个独立开关；修复发送后因禁用而吞掉提示的问题；
   下拉框改为点击式选择（滚轮不误切）；高亮行内按钮样式修复；去除菜单多余说明文字。

@@ -12,7 +12,7 @@ class MainWindow(QMainWindow):
     def __init__(self, ctl, parent=None):
         super().__init__(parent)
         self.ctl = ctl
-        self.setWindowTitle("C2Down · 电影站下载解析器")
+        self.setWindowTitle("6vdown · 电影站下载解析器")
         self.setWindowIcon(app_icon())
         self.resize(1080, 720)
         self.setMinimumSize(860, 560)
@@ -40,6 +40,6 @@ class MainWindow(QMainWindow):
         if not self.ctl.quitting and self.ctl.tray and self.ctl.tray.isVisible():
             event.ignore()
             self.hide()
-            self.ctl.notify_tip("C2Down 仍在运行", "程序已最小化到系统托盘。")
+            self.ctl.notify_tip("6vdown 仍在运行", "程序已最小化到系统托盘。")
         else:
             event.accept()
