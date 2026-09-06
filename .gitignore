@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# 运行数据（首次运行时生成）
+data/
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 图标缓存
+assets/*.ico
+assets/*.png
+
+# 编辑器
+.vscode/
+.idea/
+
+# 本地虚拟环境（禁止提交，含 Qt 大文件）
+/.venv-run/
+/.venv-*/
