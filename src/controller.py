@@ -111,6 +111,8 @@ class Controller(QObject):
         self.act_notify.setChecked(bool(self.cfg["notify_enabled"]))
         self.act_notify.toggled.connect(self._set_notify_enabled)
         self.menu.addAction(self.act_notify)
+        self.host_menu = self.menu.addMenu("下载服务器")
+        self.host_menu.aboutToShow.connect(self._refresh_host_menu)
         self.menu.addSeparator()
         aq = QAction("退出 6vdown", self.menu)
         aq.triggered.connect(self.quit)
@@ -124,6 +126,37 @@ class Controller(QObject):
         if reason in (QSystemTrayIcon.ActivationReason.DoubleClick,
                       QSystemTrayIcon.ActivationReason.Trigger):
             self.window.switch_workbench()
+
+    def _host_display_name(self, h) -> str:
+        return (h.name or "") if (h.name or "").strip() else \
+            f"{h.address}:{h.port}" if h.port else (h.address or str(h.id))
+
+    def _refresh_host_menu(self) -> None:
+        self.host_menu.clear()
+        hosts = self.db.list_hosts()
+        if not hosts:
+            na = QAction("（未配置下载服务器）", self.host_menu)
+            na.setEnabled(False)
+            self.host_menu.addAction(na)
+            return
+        for h in hosts:
+            act = QAction(self._host_display_name(h), self.host_menu)
+            act.setCheckable(True)
+            act.setChecked(bool(h.is_active))
+            act.setEnabled(not bool(h.is_active))
+            act.triggered.connect(
+                lambda _=False, hid=h.id: self._activate_host_from_tray(hid))
+            self.host_menu.addAction(act)
+
+    def _activate_host_from_tray(self, hid) -> None:
+        self.db.set_active_host(hid)
+        h = next((x for x in self.db.list_hosts() if x.id == hid), None)
+        try:
+            self.settings_page.reload_hosts()
+        except Exception:
+            pass
+        self.notify_tip("下载服务器已切换",
+                        f"当前发送目标：{self._host_display_name(h) if h else hid}")
 
     def set_disabled(self, flag: bool) -> None:
         flag = bool(flag)
