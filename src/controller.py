@@ -366,25 +366,35 @@ class Controller(QObject):
             self.window.workbench.mirror_label.setText(f"解析源：{site}")
         items = summary.get("items") or summary.get("all_items") or []
         n = summary.get("new", 0)
+        u = summary.get("updated", 0)
         new_urls = summary.get("new_urls") or []
+        upd_urls = summary.get("updated_urls") or []
         if not ok:
             wb.set_status("解析失败：" + str(summary.get("error", "")))
             self.notify_err("站点解析失败", str(summary.get("error", "未知错误")))
             return
         if items:
             try:
-                wb.load_items(items, summary, mark_new=new_urls)
+                wb.load_items(items, summary,
+                              mark_new=new_urls, mark_update=upd_urls)
             except Exception as e:
                 wb.append_log("结果填充失败：" + repr(e))
                 wb.append_log(_tb.format_exc())
                 self.notify_err("结果填充失败", str(e))
                 return
-        if not n and not items:
+        if not n and not u and not items:
             wb.set_status("无新增更新 · 表格保留上次结果")
             self.notify_tip("站点解析完成", "没有新的更新，已保留上次结果。")
             return
-        msg = (f"解析完成，发现 {n} 条新更新，已填入列表" if n
-               else f"解析完成 · 无新增 · 已展示缓存 {len(items)} 条")
+        if n or u:
+            parts = []
+            if n:
+                parts.append(f"新增 {n} 条")
+            if u:
+                parts.append(f"更新 {u} 条")
+            msg = "解析完成，" + "、".join(parts) + "，已填入列表"
+        else:
+            msg = f"解析完成 · 无新增更新 · 已展示缓存 {len(items)} 条"
         self.notify.show(
             "站点解析完成", msg,
             seconds=10, accent="#22c55e",

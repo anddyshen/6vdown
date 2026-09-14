@@ -110,6 +110,7 @@ Qt DLL 兼容问题，故依赖锁定 `PySide6>=6.6,<6.7`，推荐使用 `.venv-
 
 ```powershell
 .venv-run\Scripts\python.exe main.py      # 直接运行
+.venv-run\Scripts\python.exe -m src.app   # 等价入口（VS Code 里 ▶ 运行 src\app.py 也可，会自动补包路径）
 run-venv.bat                              # 一键：建 .venv-run + 装依赖 + 启动
 run.bat                                   # 系统 Python：装依赖后启动（备选）
 python -m unittest discover -s tests -p "test_*.py"   # 单元测试

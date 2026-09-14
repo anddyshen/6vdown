@@ -10,7 +10,7 @@ from typing import Callable, Optional
 from .. import constants
 from ..database import Database
 from ..log import get_logger
-from ..models import ParseItem
+from ..models import MirrorSite, ParseItem
 from . import mirrors as mirror_mod
 from .fetcher import SiteFetcher
 from .parser import HomeParser, parse_detail_desc, parse_detail_magnets
@@ -30,9 +30,13 @@ class SiteParseService:
             return
         first = True
         for url in constants.DEFAULT_MIRRORS:
-            self.db.upsert_mirror(mirror_mod.normalize_url(url))
+            u = mirror_mod.normalize_url(url)
+            if not u:
+                continue
+            self.db.upsert_mirror(MirrorSite(url=u, enabled=True,
+                                             is_current=first))
             if first:
-                self.db.set_current_mirror(mirror_mod.normalize_url(url))
+                self.db.set_current_mirror(u)
                 first = False
 
     def resolve_site(self) -> tuple:
@@ -79,7 +83,8 @@ class SiteParseService:
                     pass
 
         summary = {"ok": False, "site": "", "total": 0, "new": 0,
-                   "failed": 0, "error": "", "new_urls": []}
+                   "updated": 0, "failed": 0, "error": "",
+                   "new_urls": [], "updated_urls": []}
         enabled = set(enabled_blocks) if enabled_blocks else set(
             constants.DEFAULT_ENABLED_BLOCKS)
 
@@ -110,26 +115,42 @@ class SiteParseService:
                  + (f"，仍展示缓存 {len(cached)} 条" if cached else ""))
             return summary
 
-        # 增量比对
-        known = self.db.existing_detail_urls(site)
-        new_items = [it for it in items if it.detail_url not in known]
+        # 增量比对：新增（URL 不在库）+ 更新（同一详情页标题/日期前进）
+        # 连续剧/动画“更新到第 N 集/全集”时详情页 URL 不变，必须靠标题比对识别。
+        known = self.db.existing_parse_map(site)
+        new_items, updated_items = [], []
+        for it in items:
+            old = known.get(it.detail_url)
+            if old is None:
+                new_items.append(it)
+                continue
+            if ((old.title or "") != (it.title or "")
+                    or (old.date or "") != (it.date or "")):
+                it.is_update = True
+                it.prev_title = old.title or ""
+                updated_items.append(it)
         summary["new"] = len(new_items)
-        emit(f"[增量] 本次新增 {len(new_items)} 条"
+        summary["updated"] = len(updated_items)
+        emit(f"[增量] 新增 {len(new_items)} 条，更新 {len(updated_items)} 条"
              + ("（首次解析为全量）" if not known else ""))
 
-        # 详情抓取目标 = 本次新增 + 历史抓取失败/缺磁力的记录（补抓）
-        new_detail = [it for it in new_items
-                      if it.block in enabled or it.block == "其他"]
+        def _keep(it) -> bool:
+            return it.block in enabled or it.block == "其他"
+
+        # 详情抓取目标 = 新增 + 更新 + 历史抓取失败/缺磁力的记录（补抓）
+        new_detail = [it for it in new_items if _keep(it)]
+        upd_detail = [it for it in updated_items if _keep(it)]
         refresh_items = self.db.incomplete_parse_items(site) if fetch_detail else []
         refresh_map = {it.detail_url: it for it in refresh_items}
-        already = {it.detail_url for it in new_detail}
-        fetch_list = list(new_detail) + [it for it in refresh_items
-                                         if it.detail_url not in already]
+        already = {it.detail_url for it in new_detail + upd_detail}
+        fetch_list = list(new_detail) + list(upd_detail) + [
+            it for it in refresh_items if it.detail_url not in already]
 
         if fetch_detail and fetch_list:
             run_id = self.db.start_run(site)
             emit(f"[详情] 计划抓取 {len(fetch_list)} 个"
-                 f"（新增 {len(new_detail)}，补抓 {len(refresh_items)}）")
+                 f"（新增 {len(new_detail)}，更新 {len(upd_detail)}，"
+                 f"补抓 {len(refresh_items)}）")
             failed = 0
             for n, it in enumerate(fetch_list, 1):
                 if cancel and cancel():
@@ -140,7 +161,9 @@ class SiteParseService:
                     it.magnets = parse_detail_magnets(detail_html)
                     it.desc = parse_detail_desc(detail_html)
                     it.detail_ok = True
-                    emit(f"[{n}/{len(fetch_list)}] √ {it.title[:34]}" +
+                    emit(f"[{n}/{len(fetch_list)}] √ "
+                         + ("· 更新 " if it.is_update else "")
+                         + f"{it.title[:34]}" +
                          (f" 磁力×{len(it.magnets)}" if it.magnets else " (无磁力)"))
                     if not it.magnets:
                         failed += 1
@@ -157,13 +180,17 @@ class SiteParseService:
                 if polite_delay > 0:
                     time.sleep(min(polite_delay, 1.5))
 
-        # 落库新记录（含本次失败项，detail_ok=0 便于下次补抓）
-        saved = self.db.insert_parse_records(site, new_detail)
+        # 落库：新增 + 更新（含本次失败项，detail_ok=0 便于下次补抓）
+        saved, changed = self.db.upsert_parse_records(
+            site, list(new_detail) + list(upd_detail))
         summary["new_urls"] = [it.detail_url for it in new_detail
-                          if it.detail_url]
+                               if it.detail_url]
+        summary["updated_urls"] = [it.detail_url for it in upd_detail
+                                   if it.detail_url]
         summary["new"] = saved
+        summary["updated"] = changed
         if fetch_detail and fetch_list:
-            self.db.finish_run(run_id, len(items), saved, failed == 0)
+            self.db.finish_run(run_id, len(items), saved + changed, failed == 0)
             summary["failed"] = failed
 
         # 展示/缓存：整站全部记录（第二次起与首次同样完整）
@@ -171,5 +198,6 @@ class SiteParseService:
         summary["ok"] = True
         summary["items"] = cached
         summary["all_items"] = cached
-        emit(f"[完成] 新增入库 {saved} 条，缓存共 {len(cached)} 条（可直接查看/下载）")
+        emit(f"[完成] 新增入库 {saved} 条，更新 {changed} 条，"
+             f"缓存共 {len(cached)} 条（可直接查看/下载）")
         return summary

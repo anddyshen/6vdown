@@ -35,6 +35,20 @@ DETAIL_HTML = """<html><head>
 </div></body></html>"""
 
 
+TABS_HTML = """<html><body>
+<div class="col2"><div class="box">
+<ul id="tab"><li class="curr" id="tab1_btn_0" onmouseover="etabit(this)">最新电影</li>
+<li id="tab1_btn_2" onmouseover="etabit(this)">动漫新番</li></ul>
+<ul class="lt" id="tab1_div_0"><li><span>[09-10]</span><a href="/dy/1.html">2025剧情《寻她》4K.HD中字</a></li></ul>
+<ul class="lt" id="tab1_div_2" style="display:none;"><li><span>[09-07]</span><a href="/zydy/2.html">《吞噬星空》更新240</a></li></ul>
+<h3>★最新更新电视剧★</h3>
+<ul id="tab2"><li class="curr" id="tab2_btn_0">最新电视剧更新</li>
+<li id="tab2_btn_2" onmouseover="etabit(this)">美剧</li></ul>
+<ul class="lt" id="tab2_div_0"><li><span>[09-10]</span><a href="/mj/3.html"><font color='#FF0000'>《足球教练》第四季06</font></a></li></ul>
+<ul class="lt" id="tab2_div_2" style="display:none;"><li><span>[09-10]</span><a href="/mj/3.html"><font color='#FF0000'>《足球教练》第四季06</font></a></li></ul>
+</div></body></html>"""
+
+
 class TestHomeParser(unittest.TestCase):
     def test_dates_and_links(self):
         items = HomeParser(HOME_HTML, "https://www.hao6v.cc/").parse()
@@ -60,6 +74,30 @@ class TestHomeParser(unittest.TestCase):
     def test_no_unknown_when_disabled(self):
         items = HomeParser(HOME_HTML, "https://www.hao6v.cc/").parse(include_unknown=False)
         self.assertEqual(len(items), 4)
+
+
+class TestTabBlocks(unittest.TestCase):
+    """区块名来自标签按钮（tabN_btn_M ↔ tabN_div_M 配对），而不是 h1-h4。"""
+
+    def _items(self):
+        return {i.detail_url: i for i in
+                HomeParser(TABS_HTML, "https://www.hao6v.cc/").parse()}
+
+    def test_tab_names_become_blocks(self):
+        by_url = self._items()
+        self.assertEqual(len(by_url), 3)
+        self.assertEqual(by_url["https://www.hao6v.cc/dy/1.html"].block, "最新电影")
+        an = by_url["https://www.hao6v.cc/zydy/2.html"]
+        self.assertEqual(an.block, "动画")
+        self.assertEqual(an.date, "09-07")
+        self.assertEqual(an.title, "《吞噬星空》更新240")
+
+    def test_same_link_prefers_specific_block(self):
+        """同一链接同时出现在“最新电视剧更新”与“美剧”时，取更具体的“美剧”。"""
+        coach = self._items()["https://www.hao6v.cc/mj/3.html"]
+        self.assertEqual(coach.block, "美剧")
+        self.assertEqual(coach.title, "《足球教练》第四季06")
+        self.assertTrue(coach.is_red)
 
 
 class TestDetailParser(unittest.TestCase):

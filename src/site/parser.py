@@ -31,6 +31,14 @@ _META_DESC_RE = re.compile(
     r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']*)["\']',
     re.I,
 )
+# 首页标签页：按钮 <li id="tabN_btn_M">名称</li> ↔ 列表 <ul id="tabN_div_M">
+_TAB_BTN_RE = re.compile(
+    r"<li\b[^>]*\bid\s*=\s*[\"']?tab(\d+)_btn_(\d+)[\"']?[^>]*>(.*?)</li>",
+    re.S | re.I,
+)
+_TAB_DIV_RE = re.compile(
+    r"<ul\b[^>]*\bid\s*=\s*[\"']?tab(\d+)_div_(\d+)[\"']?", re.I,
+)
 
 _EXCLUDE_TAIL = ("更多", "下一页", "上一页", "尾页", "首页", "返回",
                  "网站地图", "RSS", "收藏本站", "加入收藏", "全选", "登录",
@@ -61,12 +69,38 @@ _TITLE_QUAL_RE = re.compile(
     r"剧场版|加长版|导演剪辑|中英|国语|粤语|国英|双语|中字|字幕)"
 )
 
+# 同一链接常同时出现在“最新电视剧更新”与“美剧/日韩剧”等多个区块里，
+# 用优先级决定最终归属（数值越大越具体）。
+_BLOCK_PRIORITY = {
+    "美剧": 3, "日韩剧": 3, "国剧": 3,
+    "动画": 2, "经典高清": 2,
+    "最新电影": 1, "更新电视剧": 1,
+}
+
+
+def block_priority(label: str) -> int:
+    return _BLOCK_PRIORITY.get(label or "", 0)
+
 
 def block_label_for_heading(text: str) -> str:
     for label, kws in constants.BLOCK_KEYWORDS.items():
         for kw in kws:
             if kw in text:
                 return label
+    return ""
+
+
+def tab_block_label(name: str) -> str:
+    """标签按钮文字 → 统一区块 label（未命中返回空串，交回标题兜底）。"""
+    key = clean_html(name or "")
+    if not key:
+        return ""
+    if key in constants.TAB_BLOCK_MAP:
+        return constants.TAB_BLOCK_MAP[key]
+    # 退化匹配：按钮文字里含映射键（如“最新电视剧更新(热)”）
+    for k, v in constants.TAB_BLOCK_MAP.items():
+        if k and k in key:
+            return v
     return ""
 
 
@@ -98,6 +132,23 @@ class HomeParser:
         out.sort(key=lambda x: x[0])
         return out
 
+    def _collect_tab_boundaries(self):
+        """标签页边界（位置, 区块 label）。
+
+        首页区块名并不在 h1-h4 里，而是写在与列表配对的标签按钮上：
+            <li id="tab2_btn_2">美剧</li> ... <ul id="tab2_div_2">…</ul>
+        """
+        names = {}
+        for m in _TAB_BTN_RE.finditer(self.html):
+            names[(m.group(1), m.group(2))] = m.group(3)
+        out = []
+        for m in _TAB_DIV_RE.finditer(self.html):
+            label = tab_block_label(names.get((m.group(1), m.group(2)), ""))
+            if label:
+                out.append((m.start(), label))
+        out.sort(key=lambda x: x[0])
+        return out
+
     @staticmethod
     def _pick_li_date(inner: str):
         """在 <li> 内找日期（优先日期 span，兼容无 span 行）。"""
@@ -126,21 +177,27 @@ class HomeParser:
 
         模板结构（实测）：
           <li><span>[09-04]</span><a href="...">标题</a></li>
-          区块标题位于 <h3>…★区块名★…</h3>；红链 = <a>内<font color=red>。
+          区块名有两种来源（后者优先，位置靠后即生效）：
+            1) <h3>…★区块名★…</h3>（左侧栏位）
+            2) 标签按钮 <li id="tabN_btn_M">美剧</li> ↔ <ul id="tabN_div_M"> 列表
+          红链 = <a>内<font color='#FF0000'>。
         """
         html = self.html
-        headings = self._collect_headings()
+        # (位置, 区块 label)：h1-h4 标题识别 + 标签页按钮配对识别
+        headings = [(pos, block_label_for_heading(text))
+                    for pos, text in self._collect_headings()]
+        headings += self._collect_tab_boundaries()
+        headings = [x for x in headings if x[1]]
+        headings.sort(key=lambda x: x[0])
         seen = {}
         cur_label = None
         hi = 0
         for lm in self._LI_RE.finditer(html):
             pos = lm.start()
             inner = lm.group(1)
-            # 前进到该行之前最近的标题
+            # 前进到该行之前最近的标题 / 标签页边界
             while hi < len(headings) and headings[hi][0] <= pos:
-                lab = block_label_for_heading(headings[hi][1])
-                if lab:
-                    cur_label = lab
+                cur_label = headings[hi][1]
                 hi += 1
             if not cur_label:
                 continue  # 首个区块标题之前的内容（顶部导航等）忽略
@@ -174,7 +231,13 @@ class HomeParser:
             title = re.sub(r"^[\[\(]?\d{1,2}-\d{1,2}[\]\)]?\s*", "", text).strip()
             title = re.sub(r"^【[^】]*】\s*", "", title).strip()
             detail = urljoin(self.base, href)
-            if detail in seen:
+            old = seen.get(detail)
+            if old is not None:
+                # 同一链接出现在多个区块：保留更具体的区块，并合并红链/经典标记
+                if block_priority(cur_label) > block_priority(old.block):
+                    old.block = cur_label
+                old.is_red = old.is_red or is_red
+                old.is_classic = old.is_classic or is_classic
                 continue
             it = ParseItem(title=title, date=date, block=cur_label,
                            detail_url=detail, is_red=is_red,

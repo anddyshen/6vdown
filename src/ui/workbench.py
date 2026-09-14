@@ -272,6 +272,7 @@ class WorkbenchPage(QWidget):
         self._base_items: list = []
         self._row_index: dict = {}
         self._mark_new: set = set()
+        self._mark_upd: set = set()
         self.on_magnet_list = None
         self.on_add_single = None
         self.on_open_detail = None
@@ -388,24 +389,31 @@ class WorkbenchPage(QWidget):
             self.append_log("控制台视图已展开，解析输出实时刷新中……")
     # ------------------------------------------------------------ 数据展示
     def load_items(self, items: list, summary: dict | None = None,
-                   mark_new=None) -> None:
+                   mark_new=None, mark_update=None) -> None:
         """items: list[ParseItem]（展示数据）。
 
-        mark_new: 本次解析新增 detail_url 集合。传入时：
-        - 新增记录置顶显示（内部按日期倒序，最新在最上）；
-        - 新增行高亮 + 标题加“〔新〕”标识。
-        未传入（如表头排序重载）则沿用上一次的新增标识。
+        mark_new / mark_update: 本次解析“新增”/“更新”的 detail_url 集合。
+        传入时（任一即可）：
+        - 两类记录都置顶显示（内部按日期倒序，最新在最上）；
+        - 新增行加“〔新〕”、更新行加“〔更新〕”，并使用不同高亮色。
+        未传入（如表头排序重载）则沿用上一次的标识。
         """
-        if mark_new is not None:
-            self._mark_new = {str(u) for u in mark_new if u}
+        if mark_new is not None or mark_update is not None:
+            if mark_new is not None:
+                self._mark_new = {str(u) for u in mark_new if u}
+            if mark_update is not None:
+                self._mark_upd = {str(u) for u in mark_update if u}
             self._base_items = list(items)
             q = (self.search_edit.text() or "").strip().lower()
             if q:
                 items = [it for it in items if self._match_item(it, q)]
-        new_set = self._mark_new
-        if mark_new is not None and new_set:
+        new_set, upd_set = self._mark_new, self._mark_upd
+        if (mark_new is not None or mark_update is not None) \
+                and (new_set or upd_set):
             def is_fresh(it):
-                return bool(it.detail_url and it.detail_url in new_set)
+                url = it.detail_url or ""
+                return bool(url and (url in new_set or url in upd_set))
+
             fresh = [it for it in items if is_fresh(it)]
             if fresh:
                 fresh.sort(key=lambda it: date_sort_key(it.date), reverse=True)
@@ -417,20 +425,30 @@ class WorkbenchPage(QWidget):
         self.table.setRowCount(len(self._items))
         star = QIcon(star_pixmap(16))
         dark = self.palette().color(QPalette.ColorRole.Window).lightnessF() < 0.5
-        bg_hex, fg_hex = ("#3d3105", "#fcd34d") if dark else ("#fff3cd", "#92400e")
-        bg_brush, fg_brush = QBrush(QColor(bg_hex)), QBrush(QColor(fg_hex))
+        # 新增=琥珀色；更新=蓝色（同一详情页的后续更新，如“第四季05 → 06”）
+        new_bg_hex, new_fg_hex = ("#3d3105", "#fcd34d") if dark else ("#fff3cd", "#92400e")
+        upd_bg_hex, upd_fg_hex = ("#0b2f45", "#7dd3fc") if dark else ("#e0f2fe", "#075985")
+        new_bg, new_fg = QBrush(QColor(new_bg_hex)), QBrush(QColor(new_fg_hex))
+        upd_bg, upd_fg = QBrush(QColor(upd_bg_hex)), QBrush(QColor(upd_fg_hex))
         flagged = 0
+        flagged_upd = 0
         for row, it in enumerate(self._items):
-            is_new = bool(it.detail_url and it.detail_url in new_set)
+            url = it.detail_url or ""
+            is_new = bool(url and url in new_set)
+            is_upd = bool(url and not is_new and url in upd_set)
+            bg_brush = new_bg if is_new else (upd_bg if is_upd else None)
+            fg_brush = new_fg if is_new else (upd_fg if is_upd else None)
             if is_new:
                 flagged += 1
+            elif is_upd:
+                flagged_upd += 1
             self._row_index[it.detail_url or row] = row
             # 勾选列
             c0 = QTableWidgetItem()
             c0.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             c0.setCheckState(Qt.CheckState.Unchecked)
             c0.setData(Qt.ItemDataRole.UserRole, it.detail_url or "")
-            if is_new:
+            if bg_brush is not None:
                 c0.setBackground(bg_brush)
             self.table.setItem(row, COL_SEL, c0)
             # 星标列
@@ -439,24 +457,32 @@ class WorkbenchPage(QWidget):
                 cs.setIcon(star)
                 cs.setToolTip("重要资源：" + ("红链推荐 " if it.is_red else "") +
                               ("含“经典”" if it.is_classic else ""))
-                if is_new:
+                if bg_brush is not None:
                     cs.setBackground(bg_brush)
                 self.table.setItem(row, COL_STAR, cs)
             # 标题列
             title = it.title or "(无标题)"
             if it.error:
                 title += "  ⚠"
-            show_title = ("〔新〕 " + title) if is_new else title
+            if is_new:
+                show_title = "〔新〕 " + title
+            elif is_upd:
+                show_title = "〔更新〕 " + title
+            else:
+                show_title = title
             desc_line = (it.desc or "").replace("\n", " ")[:160]
             if it.magnets:
                 desc_line += f"（{len(it.magnets)} 个磁力）"
             text = show_title if not desc_line else f"{show_title}\n{desc_line}"
             ct = SortItem(text, key=title.lower())
-            ct.setToolTip(f"{title}\n{it.desc or ''}\n详情: {it.detail_url}")
+            tip = f"{title}\n{it.desc or ''}\n详情: {it.detail_url}"
+            if is_upd and it.prev_title:
+                tip = f"更新：{it.prev_title} → {it.title}\n{tip}"
+            ct.setToolTip(tip)
             f = ct.font()
             f.setPointSize(10)
             ct.setFont(f)
-            if is_new:
+            if bg_brush is not None:
                 ct.setBackground(bg_brush)
                 ct.setForeground(fg_brush)
             self.table.setItem(row, COL_TITLE, ct)
@@ -467,7 +493,7 @@ class WorkbenchPage(QWidget):
                         else ("-" if not it.detail_url else "?"))
             m_item = SortItem(mag_text,
                               key=int(mag_text) if mag_text.isdigit() else 0)
-            if is_new:
+            if bg_brush is not None:
                 for _i in (b_item, d_item, m_item):
                     _i.setBackground(bg_brush)
             self.table.setItem(row, COL_BLOCK, b_item)
@@ -487,12 +513,19 @@ class WorkbenchPage(QWidget):
             h.addWidget(b_mag)
             h.addWidget(b_add)
             h.addStretch(1)
-            if is_new:
+            if bg_brush is not None:
                 cell.setObjectName("rowcell")
-                cell.setStyleSheet(f"QWidget#rowcell{{background:{bg_hex}; border:none;}}")
+                hex_bg = new_bg_hex if is_new else upd_bg_hex
+                cell.setStyleSheet(
+                    f"QWidget#rowcell{{background:{hex_bg}; border:none;}}")
             self.table.setCellWidget(row, COL_OP, cell)
         self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-        extra = f" · 本次新增 {flagged} 条已置顶并高亮" if flagged else ""
+        bits = []
+        if flagged:
+            bits.append(f"新增 {flagged} 条")
+        if flagged_upd:
+            bits.append(f"更新 {flagged_upd} 条")
+        extra = (" · 本次 " + "、".join(bits) + "已置顶并高亮") if bits else ""
         self.sum_label.setText(f"共 {len(self._items)} 条{extra}")
         self._update_selected_count()
         if summary:
@@ -524,16 +557,18 @@ class WorkbenchPage(QWidget):
         """Restore display to fresh-first highlighted order."""
         if not self._items:
             return
-        if not self._mark_new:
-            self.set_status("当前没有“新增”标识，列表已按常规顺序显示")
+        marks = self._mark_new | self._mark_upd
+        if not marks:
+            self.set_status("当前没有“新增/更新”标识，列表已按常规顺序显示")
             return
         fresh = [it for it in self._items
-                 if it.detail_url and it.detail_url in self._mark_new]
+                 if it.detail_url and it.detail_url in marks]
         fresh.sort(key=lambda it: date_sort_key(it.date), reverse=True)
         rest = [it for it in self._items
-                if not (it.detail_url and it.detail_url in self._mark_new)]
+                if not (it.detail_url and it.detail_url in marks)]
         self.load_items(fresh + rest)
-        self.set_status("已按本次新增置顶恢复排序（新增 " + str(len(fresh)) + " 条）")
+        self.set_status(f"已恢复置顶排序（新增 {len(self._mark_new)} 条、"
+                        f"更新 {len(self._mark_upd)} 条）")
 
 
     # ------------------------------------------------------------ 自定义排序
@@ -574,8 +609,15 @@ class WorkbenchPage(QWidget):
 
     def _show_summary(self, s: dict) -> None:
         if s.get("ok"):
+            parts = []
             n = s.get("new", 0)
-            self.set_status(f"解析完成 · 新增 {n} 条 · 详见下方列表")
+            u = s.get("updated", 0)
+            if n:
+                parts.append(f"新增 {n} 条")
+            if u:
+                parts.append(f"更新 {u} 条")
+            self.set_status("解析完成 · " + (
+                "、".join(parts) + " · 详见下方列表" if parts else "无新增更新"))
         else:
             self.set_status("解析失败：" + str(s.get("error", "未知错误")))
 

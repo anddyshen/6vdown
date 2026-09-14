@@ -75,6 +75,9 @@ class ParseItem:
     detail_ok: bool = False      # 详情页是否抓取成功
     error: str = ""
     first_seen: int = 0
+    is_update: bool = False      # 同一详情页的后续更新（集数/日期前进）
+    prev_title: str = ""         # 更新前的标题（库中旧值，用于“05 → 06”提示）
+    last_seen: int = 0           # 最近一次在首页看到的时间戳（毫秒）
 
     def magnet_urls(self) -> list:
         return [m.url for m in self.magnets]

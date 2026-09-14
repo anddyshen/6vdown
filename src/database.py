@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS parse_records(
   site_url TEXT, detail_url TEXT UNIQUE, title TEXT, date TEXT,
   block TEXT, is_red INTEGER DEFAULT 0, is_classic INTEGER DEFAULT 0,
   detail_ok INTEGER DEFAULT 0,
-  desc TEXT, magnets_json TEXT DEFAULT '[]', first_seen INTEGER);
+  desc TEXT, magnets_json TEXT DEFAULT '[]', first_seen INTEGER,
+  last_seen INTEGER DEFAULT 0, prev_title TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS parse_runs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_url TEXT, started_at INTEGER, finished_at INTEGER,
@@ -60,15 +61,22 @@ class Database:
         self._ensure_columns()
 
     def _ensure_columns(self) -> None:
-        """旧库迁移：为 parse_records 补充 detail_ok 列。"""
+        """旧库迁移：为 parse_records 补充后加的列。"""
+        added = {
+            "detail_ok": "INTEGER DEFAULT 0",
+            "last_seen": "INTEGER DEFAULT 0",
+            "prev_title": "TEXT DEFAULT ''",
+        }
         try:
             with self._lock, self._conn() as c:
                 cols = {r["name"] for r in
                         c.execute("PRAGMA table_info(parse_records)")}
-                if cols and "detail_ok" not in cols:
-                    c.execute(
-                        "ALTER TABLE parse_records "
-                        "ADD COLUMN detail_ok INTEGER DEFAULT 0")
+                if not cols:
+                    return
+                for name, ddl in added.items():
+                    if name not in cols:
+                        c.execute(
+                            f"ALTER TABLE parse_records ADD COLUMN {name} {ddl}")
         except Exception:
             pass
 
@@ -263,6 +271,68 @@ class Database:
                 new_count += 1
         return new_count
 
+    def existing_parse_map(self, site_url: str) -> dict:
+        """{detail_url: ParseItem}（含 title/date，用于判定“同页更新”）。"""
+        return {it.detail_url: it for it in self.list_parse_items(site_url)}
+
+    def upsert_parse_records(self, site_url: str, items: list) -> tuple:
+        """写入解析记录：已存在则更新（标题/日期/区块/标记/磁力）。
+
+        返回 (新增条数, 更新条数)。判定“更新”的依据是标题或日期发生变化——
+        连续剧/动画的“更新到第 N 集”“全集”就属于这一类（详情页 URL 不变）。
+        详情页未抓取成功时保留库中已有的简介与磁力，避免被清空。
+        """
+        new_count = updated_count = 0
+        with self._lock, self._conn() as c:
+            for it in items:
+                if not it.detail_url:
+                    continue
+                now = it.last_seen or now_ms()
+                mags = json.dumps(
+                    [{"label": m.label, "url": m.url} for m in it.magnets],
+                    ensure_ascii=False)
+                row = c.execute(
+                    "SELECT title,date,desc,detail_ok,magnets_json "
+                    "FROM parse_records WHERE site_url=? AND detail_url=?",
+                    (site_url, it.detail_url),
+                ).fetchone()
+                if row is None:
+                    c.execute(
+                        "INSERT INTO parse_records(site_url,detail_url,title,date,"
+                        "block,is_red,is_classic,detail_ok,desc,magnets_json,"
+                        "first_seen,last_seen,prev_title) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (site_url, it.detail_url, it.title, it.date, it.block,
+                         int(it.is_red), int(it.is_classic),
+                         int(bool(it.magnets or it.detail_ok)), it.desc, mags,
+                         it.first_seen or now, now, it.prev_title or ""),
+                    )
+                    new_count += 1
+                    continue
+                changed = ((row["title"] or "") != (it.title or "")
+                           or (row["date"] or "") != (it.date or ""))
+                if it.detail_ok or it.magnets:
+                    desc = it.desc
+                    detail_ok = int(it.detail_ok)
+                    mag_json = mags
+                else:
+                    desc = row["desc"] or ""
+                    detail_ok = int(row["detail_ok"] or 0)
+                    mag_json = row["magnets_json"] or "[]"
+                prev_title = it.prev_title or (row["title"] if changed else "")
+                c.execute(
+                    "UPDATE parse_records SET title=?,date=?,block=?,is_red=?,"
+                    "is_classic=?,detail_ok=?,desc=?,magnets_json=?,"
+                    "last_seen=?,prev_title=? "
+                    "WHERE site_url=? AND detail_url=?",
+                    (it.title, it.date, it.block, int(it.is_red),
+                     int(it.is_classic), detail_ok, desc, mag_json, now,
+                     prev_title or "", site_url, it.detail_url),
+                )
+                if changed:
+                    updated_count += 1
+        return new_count, updated_count
+
     def update_parse_item(self, site_url: str, it: ParseItem) -> None:
         """更新已存在记录的磁力/简介/状态（用于失败补抓）。"""
         with self._lock, self._conn() as c:
@@ -311,6 +381,8 @@ class Database:
             desc=r["desc"] or "", magnets=magnets,
             detail_ok=bool(r["detail_ok"]) or bool(magnets),
             first_seen=r["first_seen"] or 0,
+            prev_title=(r["prev_title"] if "prev_title" in r.keys() else "") or "",
+            last_seen=(r["last_seen"] if "last_seen" in r.keys() else 0) or 0,
         )
 
     def clear_parse_data(self, site_url: str = "") -> None:

@@ -1,6 +1,18 @@
 """Qt 应用入口：主题、单实例、主窗口装配。"""
 from __future__ import annotations
 
+if __package__ in (None, ""):
+    # 被当作脚本直接运行时（`python src/app.py`、编辑器 ▶ 运行当前文件、F5），
+    # 本模块没有父包，相对导入会失败；此处先补好项目根路径，再以 src.app 包内
+    # 模块的身份（run_name="__main__"）重新执行一遍，等价于 python -m src.app。
+    import os as _os
+    import runpy as _runpy
+    import sys as _sys
+
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    _runpy.run_module("src.app", run_name="__main__", alter_sys=True)
+    raise SystemExit(0)
+
 import sys
 
 from PySide6.QtCore import QLockFile
@@ -28,6 +40,9 @@ def _migrate_legacy_data() -> None:
     new_db = os.path.join(new_dir, "6vdown.db")
     old_db = os.path.join(old_dir, "c2down.db")
     if os.path.exists(new_db) or not os.path.exists(old_db):
+        return
+    # 程序目录里已有数据（尚未改名）时优先保留，避免用更旧的 APPDATA 快照覆盖
+    if os.path.exists(os.path.join(new_dir, "c2down.db")):
         return
     try:
         os.makedirs(new_dir, exist_ok=True)
@@ -66,8 +81,10 @@ def run(argv: list | None = None) -> int:
     apply_theme(app, "system")
 
     # 便携数据目录 + 旧数据迁移（必须在 Database() 之前执行）
-    _migrate_legacy_data()
+    # 顺序很重要：先把“程序目录里的 c2down.db”升级为 6vdown.db，
+    # 再考虑从 %APPDATA% 旧目录搬迁（否则会用更旧的 APPDATA 快照覆盖较新数据）。
     _migrate_db_name()
+    _migrate_legacy_data()
 
     # 单实例锁
     lock = QLockFile(__import__("os").path.join(app_data_dir(), "6vdown.lock"))
@@ -91,3 +108,7 @@ def run(argv: list | None = None) -> int:
         lock_path = ""
     app.aboutToQuit.connect(lambda: (ctl.cfg.save(), lock.unlock()))
     return app.exec()
+
+
+if __name__ == "__main__":  # python -m src.app / python src/app.py
+    sys.exit(run())
