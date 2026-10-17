@@ -23,6 +23,7 @@ COLORS = {
         "btn": "#2b2e36",
         "btn_hover": "#363a45",
         "btn_active": "#22252c",
+        "table_alt": "#1c1e23",
         "console_bg": "#121316",
         "tag_new_bg": "#3e2908",
         "tag_new_fg": "#fbbf24",
@@ -47,6 +48,7 @@ COLORS = {
         "btn": "#f1f5f9",
         "btn_hover": "#e2e8f0",
         "btn_active": "#cbd5e1",
+        "table_alt": "#edf2f7",
         "console_bg": "#0f172a",
         "tag_new_bg": "#fef3c7",
         "tag_new_fg": "#b45309",
@@ -229,7 +231,7 @@ QTableWidget, QTableView {{
     border: 1px solid {c['border']};
     border-radius: 8px;
     gridline-color: transparent;
-    alternate-background-color: {c['window']};
+    alternate-background-color: {c['table_alt']};
     selection-background-color: {c['sel']};
     selection-color: {c['text']};
     outline: none;
@@ -342,7 +344,7 @@ def apply_theme(app: QApplication, mode: str = "system") -> str:
     pal = QPalette()
     pal.setColor(QPalette.ColorRole.Window, QColor(c["window"]))
     pal.setColor(QPalette.ColorRole.Base, QColor(c["panel"]))
-    pal.setColor(QPalette.ColorRole.AlternateBase, QColor(c["window"]))
+    pal.setColor(QPalette.ColorRole.AlternateBase, QColor(c.get("table_alt", c["window"])))
     pal.setColor(QPalette.ColorRole.Text, QColor(c["text"]))
     pal.setColor(QPalette.ColorRole.WindowText, QColor(c["text"]))
     pal.setColor(QPalette.ColorRole.Button, QColor(c["btn"]))

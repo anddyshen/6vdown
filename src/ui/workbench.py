@@ -212,42 +212,88 @@ class MagnetDialog(QDialog):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         inner = QWidget()
         v = QVBoxLayout(inner)
-        v.setContentsMargins(4, 4, 4, 4)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.setSpacing(2)
+
+        dark = self.palette().color(QPalette.ColorRole.Window).lightnessF() < 0.5
+        row_bg_1 = "#212328" if dark else "#ffffff"
+        row_bg_2 = "#1a1c20" if dark else "#f1f5f9"
+        border_col = "#2d3139" if dark else "#e2e8f0"
+        link_color = "#38bdf8" if dark else "#0284c7"
+        row_idx = 0
+
         for group_name, magnets in ordered:
-            v.addWidget(QLabel(f"▸ {group_name}  （{len(magnets)} 个）"))
+            # 分集 / 分组标头
+            grp_lab = QLabel(f"📂 {group_name}  （{len(magnets)} 个）")
+            grp_lab.setStyleSheet(
+                "font-weight: 600; font-size: 13px; color: #3b82f6; "
+                "margin-top: 8px; margin-bottom: 2px; padding: 2px 4px;"
+            )
+            v.addWidget(grp_lab)
+
             for ml in magnets:
-                row = QHBoxLayout()
-                full = (ml.label or "").strip()
-                name_text = full if len(full) <= 160 else full[:157] + "…"
-                name_lab = QLabel(name_text if name_text else ml.url[:60])
-                name_lab.setToolTip(full or ml.url)
-                name_lab.setWordWrap(False)
-                name_lab.setStyleSheet("font-size:12px;")
-                # 链接只显示前一小段，双击可复制完整链接
-                link_show = (ml.url[:46] + "…") if len(ml.url) > 46 else ml.url
-                link_lab = ClickableLabel(link_show, ml.url)
-                link_lab.setToolTip(f"{ml.url}\n双击复制")
-                link_lab.setStyleSheet("color:#7f8ea3; font-size:11px;")
-                link_lab.double_clicked.connect(self._copy)
-                b_send = QPushButton("发送")
-                b_send.setFixedWidth(54)
-                b_send.clicked.connect(lambda _=False, u=ml.url: self._send(u))
-                b_copy = QPushButton("复制")
-                b_copy.setFixedWidth(54)
-                b_copy.clicked.connect(lambda _=False, u=ml.url: self._copy(u))
+                full_label = (ml.label or "").strip()
+                full_url = (ml.url or "").strip()
+
+                row_widget = QWidget()
+                row_bg = row_bg_2 if (row_idx % 2 == 1) else row_bg_1
+                row_widget.setObjectName("magnetRow")
+                row_widget.setStyleSheet(
+                    f"QWidget#magnetRow {{ background-color: {row_bg}; "
+                    f"border: 1px solid {border_col}; border-radius: 6px; }} "
+                    f"QWidget#magnetRow:hover {{ border-color: #3b82f6; }}"
+                )
+                row_idx += 1
+
+                row = QHBoxLayout(row_widget)
+                row.setContentsMargins(10, 6, 10, 6)
+                row.setSpacing(8)
+
+                # 名称/标签（自适应宽度，过长截断并保留tooltip）
+                display_label = full_label if full_label else (full_url[:50] + "…")
+                name_lab = QLabel(display_label)
+                name_lab.setToolTip(f"{full_label}\n{full_url}")
+                name_lab.setStyleSheet("font-size: 12px; font-weight: 500;")
+                name_lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 row.addWidget(name_lab, 1)
+
+                # 磁力链接小标签：悬停查看完整磁力，双击复制
+                link_tip = f"磁力链接：{full_url}\n（双击复制完整链接）"
+                link_lab = ClickableLabel("🔗 [磁力]", full_url)
+                link_lab.setToolTip(link_tip)
+                link_lab.setStyleSheet(
+                    f"color: {link_color}; font-size: 11px; padding: 2px 6px; "
+                    f"border-radius: 4px; background: rgba(59, 130, 246, 0.1);"
+                )
+                link_lab.double_clicked.connect(self._copy)
                 row.addWidget(link_lab, 0)
-                row.addWidget(b_send)
-                row.addWidget(b_copy)
-                v.addLayout(row)
-            v.addSpacing(6)
+
+                # 操作按钮：固定右侧，确保在任何窗口宽度下都完整显示
+                b_send = QPushButton("发送")
+                b_send.setObjectName("primary")
+                b_send.setFixedSize(54, 26)
+                b_send.setCursor(Qt.CursorShape.PointingHandCursor)
+                b_send.clicked.connect(lambda _=False, u=full_url: self._send(u))
+
+                b_copy = QPushButton("复制")
+                b_copy.setFixedSize(54, 26)
+                b_copy.setCursor(Qt.CursorShape.PointingHandCursor)
+                b_copy.clicked.connect(lambda _=False, u=full_url: self._copy(u))
+
+                row.addWidget(b_send, 0)
+                row.addWidget(b_copy, 0)
+                v.addWidget(row_widget)
+
         v.addStretch(1)
         inner.setLayout(v)
         scroll.setWidget(inner)
         lay.addWidget(scroll, 1)
+
         close = QPushButton("关闭")
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.clicked.connect(self.accept)
         lay.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
 
