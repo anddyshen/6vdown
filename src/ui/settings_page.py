@@ -93,6 +93,8 @@ class SettingsPage(QWidget):
         v = QVBoxLayout(body)
         v.addWidget(self._host_group())
         v.addWidget(self._mirror_group())
+        v.addWidget(self._subscription_group())
+        v.addWidget(self._emby_group())
         v.addWidget(self._general_group())
         v.addStretch(1)
         body.setLayout(v)
@@ -392,6 +394,84 @@ class SettingsPage(QWidget):
     def set_mirror_log(self, text: str) -> None:
         self.mirror_log.setText(text)
 
+    # ============================================================ 订阅与画质
+    def _subscription_group(self) -> QWidget:
+        g = QGroupBox("📺 订阅与自动追剧偏好")
+        form = QFormLayout(g)
+
+        self.chk_sub_startup = QCheckBox("启动 6vdown 时自动检查订阅更新")
+        form.addRow("", self.chk_sub_startup)
+
+        self.chk_sub_direct = QCheckBox("发现新更新时直接后台下载（无需弹出确认对话框）")
+        form.addRow("", self.chk_sub_direct)
+
+        self.chk_sub_sched = QCheckBox("开启后台周期性定时检查订阅")
+        form.addRow("", self.chk_sub_sched)
+
+        self.sub_sched_spin = QSpinBox()
+        self.sub_sched_spin.setRange(1, 48)
+        self.sub_sched_spin.setSuffix(" 小时")
+        form.addRow("定时检查间隔", self.sub_sched_spin)
+
+        # 画质优先级（默认 1080P > 4K > 720P > 其它）
+        q_box = QWidget()
+        q_lay = QHBoxLayout(q_box)
+        q_lay.setContentsMargins(0, 0, 0, 0)
+        self.q_labels = ["1080P", "4K", "720P", "OTHER"]
+        self.q_display = QLabel("当前默认执行顺序：<b>1080P</b> ➔ 4K ➔ 720P ➔ 其它未知画质")
+        self.q_display.setStyleSheet("color: #3b82f6; font-size: 12px;")
+        q_lay.addWidget(self.q_display)
+        form.addRow("下载画质优先级", q_box)
+
+        tip = QLabel("当某集剧集同时发布多个不同版本时，优先根据上述顺序选取单条最优磁力，防止重复下载。")
+        tip.setStyleSheet("color: #64748b; font-size: 11px;")
+        form.addRow("", tip)
+        return g
+
+    # ============================================================ Emby 联动
+    def _emby_group(self) -> QWidget:
+        g = QGroupBox("🍿 Emby 媒体库联动（自动对比缺集与防重）")
+        form = QFormLayout(g)
+
+        self.chk_emby = QCheckBox("启用与本地/远程 Emby 媒体库联动")
+        form.addRow("", self.chk_emby)
+
+        self.edit_emby_url = QLineEdit()
+        self.edit_emby_url.setPlaceholderText("http://192.168.1.x:8096")
+        form.addRow("Emby 服务器地址", self.edit_emby_url)
+
+        self.edit_emby_key = QLineEdit()
+        self.edit_emby_key.setPlaceholderText("在 Emby 后台「高级」-「Api 密钥」中生成")
+        self.edit_emby_key.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("API 密钥 (API Key)", self.edit_emby_key)
+
+        test_row = QHBoxLayout()
+        btn_test = QPushButton("测试 Emby 连接")
+        btn_test.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_test.clicked.connect(self._test_emby)
+        test_row.addWidget(btn_test)
+
+        self.emby_status_lab = QLabel("")
+        self.emby_status_lab.setStyleSheet("font-size: 12px; color: #64748b;")
+        test_row.addWidget(self.emby_status_lab, 1)
+        form.addRow("", test_row)
+
+        emby_tip = QLabel("开启后，自动读取 Emby 媒体库中的已入库集数，自动跳过已有集数，仅下载最新缺集。")
+        emby_tip.setStyleSheet("color: #64748b; font-size: 11px;")
+        form.addRow("", emby_tip)
+        return g
+
+    def _test_emby(self) -> None:
+        from ..emby_client import EmbyClient
+
+        cli = EmbyClient(self.edit_emby_url.text(), self.edit_emby_key.text())
+        ok, msg = cli.test_connection()
+        self.emby_status_lab.setText(msg)
+        if ok:
+            self.emby_status_lab.setStyleSheet("font-size: 12px; color: green;")
+        else:
+            self.emby_status_lab.setStyleSheet("font-size: 12px; color: red;")
+
     # ============================================================ 通用
     def _general_group(self) -> QWidget:
         g = QGroupBox("⚙️ 通用偏好设置")
@@ -523,9 +603,17 @@ class SettingsPage(QWidget):
         c["clip_start"] = self.clip_start_combo.currentData()
         c["enabled_blocks"] = [cb.text().replace("★ ", "")
                                for cb in self.block_checks if cb.isChecked()]
+        # 订阅与 Emby
+        c["sub_auto_on_startup"] = self.chk_sub_startup.isChecked()
+        c["sub_auto_direct_download"] = self.chk_sub_direct.isChecked()
+        c["sub_scheduler_enabled"] = self.chk_sub_sched.isChecked()
+        c["sub_interval_hours"] = self.sub_sched_spin.value()
+        c["emby_enabled"] = self.chk_emby.isChecked()
+        c["emby_server_url"] = self.edit_emby_url.text().strip()
+        c["emby_api_key"] = self.edit_emby_key.text().strip()
         c.save()
         self.ctl.apply_settings()
-        self.ctl.notify_ok("设置已保存", "下载主机与解析选项已生效。")
+        self.ctl.notify_ok("设置已保存", "下载主机、订阅与 Emby 偏好已生效。")
 
     def reload(self) -> None:
         self.reload_hosts()
@@ -544,6 +632,14 @@ class SettingsPage(QWidget):
         enabled = set(c["enabled_blocks"])
         for cb in self.block_checks:
             cb.setChecked(cb.text().replace("★ ", "") in enabled)
+        # 订阅与 Emby
+        self.chk_sub_startup.setChecked(bool(c.get("sub_auto_on_startup", True)))
+        self.chk_sub_direct.setChecked(bool(c.get("sub_auto_direct_download", False)))
+        self.chk_sub_sched.setChecked(bool(c.get("sub_scheduler_enabled", True)))
+        self.sub_sched_spin.setValue(int(c.get("sub_interval_hours", 4)))
+        self.chk_emby.setChecked(bool(c.get("emby_enabled", False)))
+        self.edit_emby_url.setText(c.get("emby_server_url", ""))
+        self.edit_emby_key.setText(c.get("emby_api_key", ""))
 
     @staticmethod
     def _set_combo(combo: QComboBox, key) -> None:

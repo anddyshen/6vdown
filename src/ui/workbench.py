@@ -179,18 +179,30 @@ class ClickableLabel(QLabel):
 class MagnetDialog(QDialog):
     """按分集列出某资源全部磁力，可逐条发送/复制。"""
 
-    def __init__(self, item: ParseItem, on_send, on_copy, parent=None):
+    def __init__(self, item: ParseItem, on_send, on_copy, on_subscribe=None, parent=None):
         super().__init__(parent)
         self._item = item
         self._on_send = on_send
         self._on_copy = on_copy
+        self._on_subscribe = on_subscribe
         self.setWindowTitle("磁力链接")
         self.setMinimumSize(640, 420)
         lay = QVBoxLayout(self)
+
+        top_h = QHBoxLayout()
         head = QLabel(f"{item.title}   [{item.date}]")
         head.setWordWrap(True)
-        head.setStyleSheet("font-weight: 600;")
-        lay.addWidget(head)
+        head.setStyleSheet("font-weight: 600; font-size: 14px;")
+        top_h.addWidget(head, 1)
+
+        if on_subscribe:
+            btn_sub = QPushButton("📌 订阅此剧更新")
+            btn_sub.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_sub.setStyleSheet("font-size: 12px; padding: 4px 10px; color: #2563eb;")
+            btn_sub.clicked.connect(lambda: self._do_sub())
+            top_h.addWidget(btn_sub, 0)
+
+        lay.addLayout(top_h)
         desc = QLabel((item.desc or "")[:300])
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #888; font-size: 12px;")
@@ -307,6 +319,10 @@ class MagnetDialog(QDialog):
         for m in list(self._item.magnets):
             self._on_send(self._item, m.url)
 
+    def _do_sub(self) -> None:
+        if self._on_subscribe:
+            self._on_subscribe(self._item)
+
 
 class WorkbenchPage(QWidget):
     parse_clicked = Signal()
@@ -322,6 +338,7 @@ class WorkbenchPage(QWidget):
         self.on_magnet_list = None
         self.on_add_single = None
         self.on_open_detail = None
+        self.on_subscribe = None
         self._build()
 
     # ------------------------------------------------------------ UI
@@ -383,7 +400,7 @@ class WorkbenchPage(QWidget):
             (COL_BLOCK, 96),
             (COL_DATE, 84),
             (COL_MAG, 58),
-            (COL_OP, 136),
+            (COL_OP, 192),
         ):
             self.table.setColumnWidth(col, w)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -581,16 +598,24 @@ class WorkbenchPage(QWidget):
             h.setContentsMargins(4, 2, 4, 2)
             h.setSpacing(6)
             b_mag = QPushButton("详情")
-            b_mag.setFixedSize(58, 28)
+            b_mag.setFixedSize(54, 28)
             b_mag.setCursor(Qt.CursorShape.PointingHandCursor)
             b_mag.clicked.connect(lambda _=False, r=row: self._open_magnet(r))
+
             b_add = QPushButton("发送")
             b_add.setObjectName("primary")
-            b_add.setFixedSize(58, 28)
+            b_add.setFixedSize(54, 28)
             b_add.setCursor(Qt.CursorShape.PointingHandCursor)
             b_add.clicked.connect(lambda _=False, r=row: self._add_row(r))
+
+            b_sub = QPushButton("订阅")
+            b_sub.setFixedSize(54, 28)
+            b_sub.setCursor(Qt.CursorShape.PointingHandCursor)
+            b_sub.clicked.connect(lambda _=False, r=row: self._sub_row(r))
+
             h.addWidget(b_mag)
             h.addWidget(b_add)
+            h.addWidget(b_sub)
             h.addStretch(1)
             if bg_brush is not None:
                 cell.setObjectName("rowcell")
@@ -749,6 +774,15 @@ class WorkbenchPage(QWidget):
         it = self._items[idx]
         if self.on_add_single:
             self.on_add_single(it, None)
+
+    def _sub_row(self, row: int) -> None:
+        key = (self.table.item(row, COL_SEL).data(Qt.ItemDataRole.UserRole) or "")
+        idx = self._row_index.get(key)
+        if idx is None or idx >= len(self._items):
+            return
+        it = self._items[idx]
+        if self.on_subscribe:
+            self.on_subscribe(it)
 
     def _open_magnet(self, row: int) -> None:
         key = (self.table.item(row, COL_SEL).data(Qt.ItemDataRole.UserRole) or "")

@@ -133,3 +133,43 @@ def task_from_row(row: Any) -> TaskRecord:
     return TaskRecord(id=row[0], created_at=row[1], title=row[2], link=row[3],
                       source=row[4], host_name=row[5], host_type=row[6],
                       status=row[7], message=row[8])
+
+
+@dataclass
+class Subscription:
+    """订阅项：追踪某部剧在站内的更新。"""
+
+    id: Optional[int] = None
+    title: str = ""
+    detail_url: str = ""
+    status: str = "active"          # active | paused | completed
+    last_ep: str = ""              # 最近检测到的集数标签，如“第12集”
+    emby_series_id: str = ""       # 绑定的 Emby Series ID（可选）
+    created_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class SubscriptionHistory:
+    """已推送/下载的订阅磁力记录（防重复）。"""
+
+    id: Optional[int] = None
+    sub_id: int = 0
+    episode_label: str = ""
+    magnet_url: str = ""
+    quality: str = ""
+    pushed_at: int = 0
+
+
+def sub_from_row(row: Any) -> Subscription:
+    return Subscription(
+        id=row[0],
+        title=row[1],
+        detail_url=row[2],
+        status=row[3],
+        last_ep=row[4] or "",
+        emby_series_id=row[5] or "",
+        created_at=row[6],
+        updated_at=row[7],
+    )
+

@@ -13,10 +13,13 @@ from .models import (
     MagnetLink,
     MirrorSite,
     ParseItem,
+    Subscription,
+    SubscriptionHistory,
     TaskRecord,
     host_from_row,
     mirror_from_row,
     now_ms,
+    sub_from_row,
     task_from_row,
 )
 
@@ -46,6 +49,17 @@ CREATE TABLE IF NOT EXISTS parse_runs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_url TEXT, started_at INTEGER, finished_at INTEGER,
   total INTEGER DEFAULT 0, new_count INTEGER DEFAULT 0, status TEXT);
+CREATE TABLE IF NOT EXISTS subscriptions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL, detail_url TEXT UNIQUE NOT NULL,
+  status TEXT DEFAULT 'active', last_ep TEXT DEFAULT '',
+  emby_series_id TEXT DEFAULT '', created_at INTEGER DEFAULT 0,
+  updated_at INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS subscription_history(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sub_id INTEGER NOT NULL, episode_label TEXT DEFAULT '',
+  magnet_url TEXT NOT NULL, quality TEXT DEFAULT '',
+  pushed_at INTEGER DEFAULT 0, UNIQUE(sub_id, magnet_url));
 CREATE TABLE IF NOT EXISTS settings(
   key TEXT PRIMARY KEY, value TEXT);
 """
@@ -417,5 +431,61 @@ class Database:
                 (site_url,),
             ).fetchone()
         return int(row["new_count"]) if row else 0
+
+    # ------------------------------------------------------------ 订阅管理 (Subscriptions)
+    def add_subscription(self, sub: Subscription) -> int:
+        with self._lock, self._conn() as c:
+            now = now_ms()
+            cur = c.execute(
+                """INSERT INTO subscriptions(title, detail_url, status, last_ep, emby_series_id, created_at, updated_at)
+                   VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(detail_url) DO UPDATE SET title=excluded.title, updated_at=excluded.updated_at""",
+                (sub.title, sub.detail_url, sub.status or "active", sub.last_ep or "",
+                 sub.emby_series_id or "", sub.created_at or now, now),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_subscriptions(self, status: str = "") -> list[Subscription]:
+        with self._lock, self._conn() as c:
+            if status:
+                rows = c.execute("SELECT * FROM subscriptions WHERE status=? ORDER BY id DESC", (status,)).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM subscriptions ORDER BY id DESC").fetchall()
+            return [sub_from_row(r) for r in rows]
+
+    def get_subscription_by_url(self, detail_url: str) -> Optional[Subscription]:
+        with self._lock, self._conn() as c:
+            r = c.execute("SELECT * FROM subscriptions WHERE detail_url=? LIMIT 1", (detail_url,)).fetchone()
+            return sub_from_row(r) if r else None
+
+    def update_subscription(self, sub: Subscription) -> None:
+        with self._lock, self._conn() as c:
+            c.execute(
+                """UPDATE subscriptions SET title=?, status=?, last_ep=?, emby_series_id=?, updated_at=?
+                   WHERE id=?""",
+                (sub.title, sub.status, sub.last_ep, sub.emby_series_id, now_ms(), sub.id),
+            )
+
+    def delete_subscription(self, sub_id: int) -> None:
+        with self._lock, self._conn() as c:
+            c.execute("DELETE FROM subscriptions WHERE id=?", (sub_id,))
+            c.execute("DELETE FROM subscription_history WHERE sub_id=?", (sub_id,))
+
+    def is_magnet_pushed(self, sub_id: int, magnet_url: str) -> bool:
+        with self._lock, self._conn() as c:
+            r = c.execute(
+                "SELECT 1 FROM subscription_history WHERE sub_id=? AND magnet_url=? LIMIT 1",
+                (sub_id, magnet_url),
+            ).fetchone()
+            return bool(r)
+
+    def record_pushed_magnet(self, sub_id: int, episode_label: str, magnet_url: str, quality: str = "") -> None:
+        with self._lock, self._conn() as c:
+            c.execute(
+                """INSERT OR IGNORE INTO subscription_history(sub_id, episode_label, magnet_url, quality, pushed_at)
+                   VALUES(?,?,?,?,?)""",
+                (sub_id, episode_label, magnet_url, quality, now_ms()),
+            )
+
 
 

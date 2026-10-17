@@ -14,12 +14,15 @@ from .config import Config
 from .database import Database
 from .downloader import DownloaderManager
 from .downloader.manager import TYPE_LABELS
+from .emby_client import EmbyClient
 from .linkparse import magnet_hash, parse_text
 from .log import get_logger
-from .models import TaskRecord
+from .models import Subscription, TaskRecord
+from .scheduler_iface import AutoParseController
 from .site import mirrors as mirror_mod
 from .site.fetcher import SiteFetcher
 from .site.service import SiteParseService
+from .subscription_engine import filter_subscription_updates
 from .ui import theme as theme_mod
 from .ui.drop_window import DropWindow
 from .ui.history_page import HistoryPage
@@ -27,6 +30,8 @@ from .ui.icons import app_icon
 from .ui.main_window import MainWindow
 from .ui.notify import NotifyManager
 from .ui.settings_page import SettingsPage
+from .ui.subscription_confirm_dialog import SubscriptionConfirmDialog
+from .ui.subscription_page import SubscriptionPage
 from .ui.workers import MirrorProbeWorker, ParseWorker, SendRunnable
 from .ui.workbench import MagnetDialog
 
@@ -57,6 +62,7 @@ class Controller(QObject):
         self.notify = NotifyManager()
         self._pool = QThreadPool.globalInstance()
 
+        self.sub_page = SubscriptionPage(self)
         self.history_page = HistoryPage(self.db)
         self.settings_page = SettingsPage(self)
         self.window = MainWindow(self)
@@ -66,6 +72,10 @@ class Controller(QObject):
         self._probe = None
         self._last_clip = ""
         self._recent_sent = {}
+        self.scheduler = AutoParseController(
+            callback=self.run_subscription_check,
+            interval_minutes=int(self.cfg.get("sub_interval_hours", 4)) * 60,
+        )
 
         self._wire()
         self.apply_settings()
@@ -78,6 +88,8 @@ class Controller(QObject):
         wb.stop_clicked.connect(self.stop_parse)
         wb.on_magnet_list = self.open_magnet_dialog
         wb.on_add_single = self.add_item_to_downloader
+        wb.on_subscribe = self.subscribe_item
+        self.sub_page.check_all_clicked.connect(self.run_subscription_check)
         self.history_page.on_re_send = self.re_send_task
         self.drop.dropped.connect(self.on_dropped)
         self._setup_tray()
@@ -284,6 +296,7 @@ class Controller(QObject):
             item,
             on_send=lambda it, u: self.send(u, it.title or "", "site"),
             on_copy=lambda u: self.copy_link(u),
+            on_subscribe=self.subscribe_item,
             parent=self.window,
         )
         dlg.exec()
@@ -479,6 +492,89 @@ class Controller(QObject):
             self.act_notify.setChecked(bool(self.cfg["notify_enabled"]))
             self.act_notify.blockSignals(False)
 
+    def subscribe_item(self, item) -> None:
+        """从工作台或详情页订阅某部剧。"""
+        sub = Subscription(
+            title=item.title,
+            detail_url=item.detail_url,
+            status="active",
+            last_ep=item.title,
+        )
+        self.db.add_subscription(sub)
+        self.sub_page.reload()
+        self.notify_ok("已加入追剧订阅", f"《{item.title}》已纳入自动更新检查清单。")
+
+    def run_subscription_check(self) -> None:
+        """后台拉取所有订阅剧集的更新，并在 Emby 差量对比及画质挑选后汇聚。"""
+        active_subs = self.db.list_subscriptions(status="active")
+        if not active_subs:
+            return
+
+        log.info("开始检查 %d 部订阅剧集...", len(active_subs))
+        emby_cli = None
+        if self.cfg.get("emby_enabled"):
+            emby_cli = EmbyClient(self.cfg.get("emby_server_url", ""), self.cfg.get("emby_api_key", ""))
+
+        priority = self.cfg.get("quality_priority", ["1080P", "4K", "720P", "OTHER"])
+        collected_updates: list[dict] = []
+
+        for sub in active_subs:
+            # 抓取详情页
+            item = self.fetcher.fetch_detail(sub.detail_url)
+            if not item or not item.magnets:
+                continue
+
+            # 更新最新集标识
+            if item.title and item.title != sub.last_ep:
+                sub.last_ep = item.title
+                self.db.update_subscription(sub)
+
+            # 查询 Emby 本地已入库剧集
+            emby_existing = None
+            if emby_cli and emby_cli.is_configured():
+                emby_existing = emby_cli.find_series_episodes(sub.title)
+
+            # 筛选待下载更新
+            updates = filter_subscription_updates(
+                sub=sub,
+                item=item,
+                is_pushed_fn=self.db.is_magnet_pushed,
+                priority_order=priority,
+                emby_existing=emby_existing,
+            )
+            collected_updates.extend(updates)
+
+        if not collected_updates:
+            log.info("订阅检查完毕：无新增待下载集数。")
+            self.sub_page.reload()
+            return
+
+        log.info("订阅发现 %d 条新剧集更新！", len(collected_updates))
+        self.sub_page.reload()
+
+        # 是否开启了“直接下载无需同意”
+        if self.cfg.get("sub_auto_direct_download", False):
+            self._push_subscription_tasks(collected_updates)
+            self.notify_ok("订阅剧集已自动开始下载", f"已直接推送 {len(collected_updates)} 条最新剧集磁力。")
+        else:
+            # 弹出汇聚确认对话框
+            dlg = SubscriptionConfirmDialog(
+                collected_updates,
+                on_confirm=self._push_subscription_tasks,
+                parent=self.window,
+            )
+            dlg.exec()
+
+    def _push_subscription_tasks(self, tasks: list[dict]) -> None:
+        for t in tasks:
+            self.send(t["magnet_url"], f"[{t['sub_title']}] {t['ep_label']} ({t['quality']})", "site")
+            self.db.record_pushed_magnet(
+                sub_id=t["sub_id"],
+                episode_label=t["ep_label"],
+                magnet_url=t["magnet_url"],
+                quality=t["quality"],
+            )
+
     def _apply_startup_state(self) -> None:
         # startup clipboard-monitor state: enable / disable / last-closed
         mode = str(self.cfg.get("clip_start", "last"))
@@ -492,6 +588,16 @@ class Controller(QObject):
                 self.set_disabled(True)
         else:
             self.set_disabled(not bool(self.cfg.get("clipboard_monitor", True)))
+
+        # 启动定时调度器
+        if self.cfg.get("sub_scheduler_enabled", True):
+            self.scheduler.set_interval(int(self.cfg.get("sub_interval_hours", 4)) * 60)
+            self.scheduler.start()
+
+        # 启动后延迟 15 秒检查一次订阅更新（避免开机网络未就绪）
+        if self.cfg.get("sub_auto_on_startup", True):
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(15000, self.run_subscription_check)
 
     def quit(self) -> None:
         self.quitting = True

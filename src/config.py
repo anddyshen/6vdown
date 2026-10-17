@@ -25,7 +25,18 @@ DEFAULTS = {
     "start_behavior": "window",
     "clip_start": "last",
     "first_run": True,
+    # 订阅与自动追剧
+    "sub_auto_on_startup": True,             # 启动后自动检查订阅
+    "sub_auto_direct_download": False,        # 发现新集数直接下载无需确认（默认需确认）
+    "sub_scheduler_enabled": True,           # 周期性定时检查
+    "sub_interval_hours": 4,                 # 检查间隔（小时）
+    "quality_priority": ["1080P", "4K", "720P", "OTHER"],  # 默认 1080P 优先
+    # Emby 媒体库联动
+    "emby_enabled": False,
+    "emby_server_url": "",                   # http://192.168.1.x:8096
+    "emby_api_key": "",
 }
+
 
 
 class Config:
