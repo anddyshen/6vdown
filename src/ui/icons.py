@@ -58,9 +58,24 @@ def _draw_fallback(pm: QPixmap, accent: QColor) -> None:
     p.end()
 
 
+def _resolve_asset(filename: str) -> str:
+    # 优先使用打包解压内/项目内的 assets
+    p = os.path.join(project_root(), "assets", filename)
+    if os.path.isfile(p):
+        return p
+    # 回退检查 exe 同级的 assets
+    try:
+        alt = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "assets", filename)
+        if os.path.isfile(alt):
+            return alt
+    except Exception:
+        pass
+    return p
+
+
 def make_app_pixmap(size: int = 64, gray: bool = False) -> QPixmap:
     # 优先使用 assets 中生成的高质量图标
-    png_path = os.path.join(project_root(), "assets", "6vdown.png")
+    png_path = _resolve_asset("6vdown.png")
     if os.path.isfile(png_path):
         base = QPixmap(png_path)
         if not base.isNull():
@@ -86,7 +101,7 @@ def make_app_pixmap(size: int = 64, gray: bool = False) -> QPixmap:
 
 
 def app_icon(gray: bool = False) -> QIcon:
-    ico_path = os.path.join(project_root(), "assets", "6vdown.ico")
+    ico_path = _resolve_asset("6vdown.ico")
     if not gray and os.path.isfile(ico_path):
         icon = QIcon(ico_path)
         if not icon.isNull():

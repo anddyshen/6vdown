@@ -10,6 +10,10 @@ def is_frozen() -> bool:
 
 
 def project_root() -> str:
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
+            return sys._MEIPASS
+        return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
