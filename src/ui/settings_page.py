@@ -103,25 +103,28 @@ class SettingsPage(QWidget):
 
     # ============================================================ 下载主机
     def _host_group(self) -> QWidget:
-        g = QGroupBox("下载主机（qBittorrent / Transmission / Aria2）")
+        g = QGroupBox("🖥️ 下载主机（qBittorrent / Transmission / Aria2）")
         lay = QVBoxLayout(g)
         self.host_table = QTableWidget(0, 5)
         self.host_table.setHorizontalHeaderLabels(["类型", "名称", "地址:端口", "激活", "操作"])
         hh = self.host_table.horizontalHeader()
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.host_table.verticalHeader().setVisible(False)
+        self.host_table.verticalHeader().setDefaultSectionSize(36)
         self.host_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.host_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.host_table.setMinimumHeight(170)
         lay.addWidget(self.host_table)
         row = QHBoxLayout()
         for text, fn in (("新建", self._host_add), ("设为激活", self._host_active),
                          ("测试连接", self._host_test), ("编辑", self._host_edit),
                          ("删除", self._host_del)):
             b = QPushButton(text)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, f=fn: f())
             row.addWidget(b)
         self.active_host_label = QLabel("")
-        self.active_host_label.setStyleSheet("color:#888;")
+        self.active_host_label.setStyleSheet("color:#64748b; font-weight:500;")
         row.addWidget(self.active_host_label, 1)
         lay.addLayout(row)
         return g
@@ -141,21 +144,26 @@ class SettingsPage(QWidget):
                 self.host_table.item(r, 3).setForeground(Qt.GlobalColor.darkGreen)
             cell = QWidget()
             hl = QHBoxLayout(cell)
-            hl.setContentsMargins(2, 0, 2, 0)
+            hl.setContentsMargins(4, 2, 4, 2)
+            hl.setSpacing(6)
             b_act = QPushButton("激活")
-            b_act.setFixedSize(52, 22)
+            b_act.setFixedSize(54, 26)
+            b_act.setCursor(Qt.CursorShape.PointingHandCursor)
             b_act.clicked.connect(lambda _=False, hid=h.id: self._set_active(hid))
             b_edit = QPushButton("编辑")
-            b_edit.setFixedSize(52, 22)
+            b_edit.setFixedSize(54, 26)
+            b_edit.setCursor(Qt.CursorShape.PointingHandCursor)
             b_edit.clicked.connect(lambda _=False, hid=h.id: self._edit_host(hid))
             b_del = QPushButton("删除")
-            b_del.setFixedSize(52, 22)
+            b_del.setFixedSize(54, 26)
+            b_del.setCursor(Qt.CursorShape.PointingHandCursor)
             b_del.clicked.connect(lambda _=False, hid=h.id: self._del_host(hid))
             hl.addWidget(b_act)
             hl.addWidget(b_edit)
             hl.addWidget(b_del)
             hl.addStretch(1)
             self.host_table.setCellWidget(r, 4, cell)
+            self.host_table.setRowHeight(r, 38)
         h = self.db.active_host()
         self.active_host_label.setText(
             (f"当前发送目标：{TYPE_SHORT.get(h.type, '')}/{(h.name or '')}"
@@ -238,7 +246,7 @@ class SettingsPage(QWidget):
 
     # ============================================================ 镜像
     def _mirror_group(self) -> QWidget:
-        g = QGroupBox("站点与镜像域名（解析源，支持随时新增 / 检测）")
+        g = QGroupBox("🌐 站点与镜像域名（解析源，支持随时新增 / 检测）")
         lay = QVBoxLayout(g)
         self.mirror_table = QTableWidget(0, 6)
         self.mirror_table.setHorizontalHeaderLabels(
@@ -246,31 +254,36 @@ class SettingsPage(QWidget):
         hh = self.mirror_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.mirror_table.verticalHeader().setVisible(False)
+        self.mirror_table.verticalHeader().setDefaultSectionSize(36)
         self.mirror_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.mirror_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.mirror_table.setMinimumHeight(190)
         lay.addWidget(self.mirror_table)
         row = QHBoxLayout()
         for text, fn in (("添加域名", self._mirror_add), ("设为当前", self._mirror_current),
                          ("编辑", self._mirror_edit_sel), ("删除", self._mirror_del)):
             b = QPushButton(text)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.clicked.connect(lambda _=False, f=fn: f())
             row.addWidget(b)
         row.addStretch(1)
         self.btn_probe = QPushButton("检测全部可用性")
+        self.btn_probe.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_probe.clicked.connect(lambda: self.ctl.detect_mirrors(False))
         row.addWidget(self.btn_probe)
         self.btn_discover = QPushButton("从发布页发现新域名")
+        self.btn_discover.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_discover.clicked.connect(lambda: self.ctl.detect_mirrors(True))
         row.addWidget(self.btn_discover)
         lay.addLayout(row)
         self.mirror_log = QLabel("")
-        self.mirror_log.setStyleSheet("color:#888; font-size:12px;")
+        self.mirror_log.setStyleSheet("color:#64748b; font-size:12px;")
         self.mirror_log.setWordWrap(True)
         lay.addWidget(self.mirror_log)
         self.probe_bar = QProgressBar()
         self.probe_bar.setRange(0, 0)
         self.probe_bar.setTextVisible(False)
-        self.probe_bar.setFixedHeight(10)
+        self.probe_bar.setFixedHeight(8)
         self.probe_bar.hide()
         lay.addWidget(self.probe_bar)
         self.mirror_table.itemDoubleClicked.connect(
@@ -293,6 +306,7 @@ class SettingsPage(QWidget):
             self.mirror_table.setItem(r, 3, item)
             self.mirror_table.setItem(r, 4, QTableWidgetItem(_ts(m.checked_at)))
             self.mirror_table.setItem(r, 5, QTableWidgetItem(m.note or ""))
+            self.mirror_table.setRowHeight(r, 38)
         if not mirrors:
             self.mirror_log.setText("（暂无镜像，首次解析将自动写入默认域名）")
 
@@ -380,7 +394,7 @@ class SettingsPage(QWidget):
 
     # ============================================================ 通用
     def _general_group(self) -> QWidget:
-        g = QGroupBox("通用设置")
+        g = QGroupBox("⚙️ 通用偏好设置")
         form = QFormLayout(g)
         self.theme_combo = NoWheelComboBox()
         for key, lab in (("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")):

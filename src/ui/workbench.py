@@ -281,29 +281,43 @@ class WorkbenchPage(QWidget):
     # ------------------------------------------------------------ UI
     def _build(self) -> None:
         root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
+
+        # 顶部控制栏
         bar = QHBoxLayout()
         self.mirror_label = QLabel("解析源：-")
-        self.mirror_label.setStyleSheet("font-weight:600;")
+        self.mirror_label.setStyleSheet(
+            "font-weight: 600; padding: 4px 10px; border-radius: 12px; background: rgba(59, 130, 246, 0.12); color: #3b82f6;"
+        )
         bar.addWidget(self.mirror_label)
         bar.addStretch(1)
-        self.status_label = QLabel("待激活 · 尚未解析")
-        self.status_label.setStyleSheet("color:#888;")
+
+        self.status_label = QLabel("● 待激活 · 尚未解析")
+        self.status_label.setStyleSheet("color: #94a3b8; font-size: 12px;")
         bar.addWidget(self.status_label)
+
         self.btn_console = QPushButton("控制台")
         self.btn_console.setCheckable(True)
         self.btn_console.setChecked(False)
+        self.btn_console.setCursor(Qt.CursorShape.PointingHandCursor)
         bar.addWidget(self.btn_console)
+
         self.btn_parse = QPushButton("▶ 开始解析")
         self.btn_parse.setObjectName("primary")
+        self.btn_parse.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_parse.clicked.connect(self._on_parse)
         bar.addWidget(self.btn_parse)
         root.addLayout(bar)
 
+        # 搜索与过滤行
         search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("筛选："))
+        search_lab = QLabel("🔍 搜索过滤：")
+        search_lab.setStyleSheet("font-weight: 500; color: #64748b;")
+        search_row.addWidget(search_lab)
+
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText(
-            "输入标题关键词或拼音首字母过滤（如 dy = 电影）……")
+        self.search_edit.setPlaceholderText("输入标题关键词、拼音首字母过滤（如 dy = 电影）……")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._on_search_changed)
         search_row.addWidget(self.search_edit, 1)
@@ -312,15 +326,24 @@ class WorkbenchPage(QWidget):
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableWidget(0, COL_OP + 1)
         self.table.setHorizontalHeaderLabels(
-            ["", "星", "电影名称 / 简介", "区块", "日期", "磁力", "操作"])
+            ["", "★", "电影名称 / 简介", "区块", "日期", "磁力", "操作"]
+        )
         self.table.horizontalHeader().setSectionResizeMode(
-            COL_TITLE, QHeaderView.ResizeMode.Stretch)
-        for col, w in ((COL_SEL, 34), (COL_STAR, 30), (COL_BLOCK, 92),
-                       (COL_DATE, 76), (COL_MAG, 54), (COL_OP, 128)):
+            COL_TITLE, QHeaderView.ResizeMode.Stretch
+        )
+        for col, w in (
+            (COL_SEL, 38),
+            (COL_STAR, 34),
+            (COL_BLOCK, 96),
+            (COL_DATE, 84),
+            (COL_MAG, 58),
+            (COL_OP, 136),
+        ):
             self.table.setColumnWidth(col, w)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(40)
         self.table.setAlternatingRowColors(True)
         self.table.setWordWrap(False)
         self._sort_col = -1
@@ -335,9 +358,10 @@ class WorkbenchPage(QWidget):
         self.console.setReadOnly(True)
         self.console.setMaximumBlockCount(1500)
         self.console.setStyleSheet(
-            "QPlainTextEdit{background:#14151a; color:#cfd6e4;"
-            "font-family:Consolas,'Courier New',monospace; font-size:12px;"
-            "border:1px solid #222;}")
+            "QPlainTextEdit { background: #0f172a; color: #38bdf8; "
+            "font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace; "
+            "font-size: 12px; border-radius: 8px; border: 1px solid #1e293b; padding: 6px; }"
+        )
         self.console.hide()
         self.splitter.addWidget(self.console)
         self.splitter.setStretchFactor(0, 6)
@@ -346,18 +370,24 @@ class WorkbenchPage(QWidget):
         self.btn_console.toggled.connect(self.console.setVisible)
         self.btn_console.toggled.connect(self._on_console_toggled)
 
+        # 底部操作栏
         bottom = QHBoxLayout()
         self.chk_all = QCheckBox("全选")
         self.chk_all.stateChanged.connect(self._toggle_all)
         bottom.addWidget(self.chk_all)
         self.sum_label = QLabel("共 0 条")
+        self.sum_label.setStyleSheet("color: #64748b; font-weight: 500;")
         bottom.addWidget(self.sum_label)
         bottom.addStretch(1)
+
         self.btn_restore_new = QPushButton("恢复新增排序")
+        self.btn_restore_new.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_restore_new.clicked.connect(self.restore_new_first)
         bottom.addWidget(self.btn_restore_new)
+
         self.btn_add_selected = QPushButton("添加选中到下载器 (0)")
         self.btn_add_selected.setObjectName("primary")
+        self.btn_add_selected.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add_selected.clicked.connect(self._add_selected)
         bottom.addWidget(self.btn_add_selected)
         root.addLayout(bottom)
@@ -502,13 +532,16 @@ class WorkbenchPage(QWidget):
             # 操作按钮
             cell = QWidget()
             h = QHBoxLayout(cell)
-            h.setContentsMargins(2, 0, 2, 0)
+            h.setContentsMargins(4, 2, 4, 2)
+            h.setSpacing(6)
             b_mag = QPushButton("详情")
-            b_mag.setFixedSize(56, 24)
+            b_mag.setFixedSize(58, 28)
+            b_mag.setCursor(Qt.CursorShape.PointingHandCursor)
             b_mag.clicked.connect(lambda _=False, r=row: self._open_magnet(r))
             b_add = QPushButton("发送")
             b_add.setObjectName("primary")
-            b_add.setFixedSize(56, 24)
+            b_add.setFixedSize(58, 28)
+            b_add.setCursor(Qt.CursorShape.PointingHandCursor)
             b_add.clicked.connect(lambda _=False, r=row: self._add_row(r))
             h.addWidget(b_mag)
             h.addWidget(b_add)
@@ -517,7 +550,8 @@ class WorkbenchPage(QWidget):
                 cell.setObjectName("rowcell")
                 hex_bg = new_bg_hex if is_new else upd_bg_hex
                 cell.setStyleSheet(
-                    f"QWidget#rowcell{{background:{hex_bg}; border:none;}}")
+                    f"QWidget#rowcell{{background:{hex_bg}; border:none; border-radius:4px;}}"
+                )
             self.table.setCellWidget(row, COL_OP, cell)
         self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         bits = []

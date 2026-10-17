@@ -29,25 +29,39 @@ class HistoryPage(QWidget):
 
     def _build(self) -> None:
         root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
+
         bar = QHBoxLayout()
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索标题 / 链接 / 主机（支持拼音首字母）……")
+        self.search.setPlaceholderText("🔍 搜索标题 / 链接 / 主机（支持拼音首字母）……")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.refresh)
         bar.addWidget(self.search, 1)
+
         btn_find = QPushButton("查询")
+        btn_find.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_find.clicked.connect(self.refresh)
         bar.addWidget(btn_find)
+
         self.count_label = QLabel("")
+        self.count_label.setStyleSheet("color: #64748b; font-weight: 500;")
         bar.addWidget(self.count_label)
         bar.addStretch(1)
+
         btn_retry = QPushButton("再次发送选中")
+        btn_retry.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_retry.clicked.connect(self._retry)
         bar.addWidget(btn_retry)
+
         btn_del = QPushButton("删除选中")
+        btn_del.setObjectName("danger")
+        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_del.clicked.connect(self._delete)
         bar.addWidget(btn_del)
+
         btn_refresh = QPushButton("刷新")
+        btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_refresh.clicked.connect(self.refresh)
         bar.addWidget(btn_refresh)
         root.addLayout(bar)

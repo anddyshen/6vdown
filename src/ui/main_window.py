@@ -14,17 +14,18 @@ class MainWindow(QMainWindow):
         self.ctl = ctl
         self.setWindowTitle("6vdown · 电影站下载解析器")
         self.setWindowIcon(app_icon())
-        self.resize(1080, 720)
-        self.setMinimumSize(860, 560)
+        self.resize(1120, 750)
+        self.setMinimumSize(880, 580)
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.workbench = WorkbenchPage()
-        self.tabs.addTab(self.workbench, "解析工作台")
-        self.tabs.addTab(ctl.history_page, "历史记录")
-        self.tabs.addTab(ctl.settings_page, "设置")
+        self.tabs.addTab(self.workbench, "⚡ 解析工作台")
+        self.tabs.addTab(ctl.history_page, "📜 历史记录")
+        self.tabs.addTab(ctl.settings_page, "⚙️ 设置")
         self.setCentralWidget(self.tabs)
 
-        self.statusBar().showMessage("待激活 · 复制磁力链接后自动发送")
+        self.statusBar().showMessage("🟢 待激活 · 复制磁力链接后自动发送")
 
     def set_status(self, text: str) -> None:
         self.statusBar().showMessage(text)
