@@ -80,8 +80,11 @@ def filter_subscription_updates(
             if (season_num, e) in emby_existing:
                 continue
 
-        # 2. 如果该组所有磁力都已在本地推送历史中，跳过
-        unpushed = [m for m in m_list if not is_pushed_fn(sub.id, m.url)]
+        # 2. 只考虑可发送类型（磁力/种子附件）；网盘与非种子附件仅展示复制
+        sendable = [m for m in m_list
+                    if getattr(m, "kind", "magnet") in ("magnet", "torrent")]
+        # 3. 如果该组所有可发送磁力都已在本地推送历史中，跳过
+        unpushed = [m for m in sendable if not is_pushed_fn(sub.id, m.url)]
         if not unpushed:
             continue
 

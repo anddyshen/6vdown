@@ -15,13 +15,16 @@ class ParseWorker(QThread):
     done = Signal(dict)
 
     def __init__(self, service, enabled_blocks=None, include_unknown=True,
-                 fetch_detail=True, polite_delay=0.3, parent=None):
+                 fetch_detail=True, polite_delay=0.3, sites=None,
+                 concurrency=1, parent=None):
         super().__init__(parent)
         self._service = service
         self._blocks = enabled_blocks
         self._unknown = include_unknown
         self._detail = fetch_detail
         self._delay = polite_delay
+        self._sites = sites
+        self._concurrency = concurrency
 
     def run(self) -> None:  # noqa: D102
         try:
@@ -30,6 +33,8 @@ class ParseWorker(QThread):
                 include_unknown=self._unknown,
                 fetch_detail=self._detail,
                 polite_delay=self._delay,
+                sites=self._sites,
+                concurrency=self._concurrency,
                 log_cb=lambda s: self.log_line.emit(s),
                 cancel=lambda: self.isInterruptionRequested(),
             )

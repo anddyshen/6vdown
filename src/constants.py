@@ -73,6 +73,12 @@ DEFAULT_MIRRORS = [
 PUBLISH_PAGE = "https://www.6v123.com/"
 PUBLISH_DOMAIN_HINTS = ("6v123.com",)
 
+# ---------------------------------------------------------------- 默认站点实例
+# 站点实例（site_instances）绑定解析模块；首次运行自动创建默认站点，
+# 其入口为空 → 使用上面的共享镜像池（保持旧版行为不变）。
+DEFAULT_SITE_MODULE = "hao6v"
+DEFAULT_SITE_NAME = "6v电影（默认）"
+
 # ---------------------------------------------------------------- 解析区块
 # label -> 标题关键词（首页区块标题命中任一即归属该区块）
 BLOCK_KEYWORDS = {
@@ -83,6 +89,8 @@ BLOCK_KEYWORDS = {
     "日韩剧": ["日韩剧", "日韩"],
     "美剧": ["美剧", "欧美剧", "欧美"],
     "动画": ["动画", "动漫"],
+    "短剧": ["短剧"],
+    "综艺": ["综艺"],
 }
 DEFAULT_ENABLED_BLOCKS = list(BLOCK_KEYWORDS.keys())
 

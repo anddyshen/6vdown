@@ -1,0 +1,67 @@
+{
+  "module_id": "lou1",
+  "name": "BT之家 1LOU（1lou.me）· 规则版",
+  "desc": "Xiuno BBS 论坛版块页；li.media thread 行 + data-href 帖子链接 + text-title 标题 + date span 日期；skip_row_re 跳过置顶公告；附件/网盘链接分类提取。等价于内置 lou1 模块。",
+  "encoding": "utf-8",
+  "entry_mode": "entries",
+  "entry_urls": [
+    "https://www.1lou.me/forum-1.htm",
+    "https://www.1lou.me/forum-3.htm",
+    "https://www.1lou.me/forum-13.htm",
+    "https://www.1lou.me/forum-2.htm",
+    "https://www.1lou.me/forum-4.htm",
+    "https://www.1lou.me/forum-14.htm",
+    "https://www.1lou.me/forum-17.htm",
+    "https://www.1lou.me/forum-10.htm"
+  ],
+  "max_pages": 1,
+  "page_template": "",
+  "extract": {
+    "mode": "rows",
+    "row_re": "<li class=\"media thread.*?</li>",
+    "link_re": "data-href=\"(thread-\\d+\\.htm)\"",
+    "title_re": "class=\"text-title\"[^>]*>(.*?)</a>",
+    "status_re": "",
+    "date_re": "<span class=\"date[^>]*>\\s*(\\d{4}-\\d{1,2}-\\d{1,2})",
+    "block_re": "",
+    "block_row_re": "<a href=\"forum-\\d+\\.htm\"[^>]*title=\"([^\"]*)\"",
+    "block_name_map": {
+      "最新电影": "最新电影",
+      "高清电影": "最新电影",
+      "网盘电影": "最新电影",
+      "电视剧集": "更新电视剧",
+      "高清剧集": "更新电视剧",
+      "网盘剧集": "更新电视剧",
+      "国剧": "国剧",
+      "日韩剧": "日韩剧",
+      "欧美剧": "美剧",
+      "美剧": "美剧",
+      "动漫专区": "动画",
+      "动漫": "动画",
+      "纪录综艺": "综艺",
+      "综艺": "综艺"
+    },
+    "block_map": {
+      "/forum-1.htm": "最新电影",
+      "/forum-3.htm": "最新电影",
+      "/forum-13.htm": "最新电影",
+      "/forum-2.htm": "更新电视剧",
+      "/forum-4.htm": "更新电视剧",
+      "/forum-14.htm": "更新电视剧",
+      "/forum-17.htm": "动画",
+      "/forum-10.htm": "综艺"
+    },
+    "skip_row_re": "title=\"(站务专区|交流专区|求助专区|新美图区|游戏专区|音乐专区|图书专区)\"",
+    "min_title_len": 2,
+    "title_qual_re": "",
+    "title_status_join": true,
+    "alt_complete": false,
+    "lookback": 900
+  },
+  "detail": {
+    "magnet_re": "magnet:\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
+    "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com", "pan.baidu.com", "drive.uc.cn", "cloud.189.cn", "xunlei.com", "115.com", "weiyun.com"],
+    "attach_res": ["attach-download", "/download/", "download.php"],
+    "desc_mode": "info"
+  }
+}

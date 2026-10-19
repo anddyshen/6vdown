@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.workbench = WorkbenchPage()
+        self.workbench = WorkbenchPage(ctl.db, ctl.cfg)
         self.tabs.addTab(self.workbench, "⚡ 解析工作台")
         self.tabs.addTab(ctl.sub_page, "📺 我的订阅")
         self.tabs.addTab(ctl.history_page, "📜 历史记录")

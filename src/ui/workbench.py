@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -217,10 +219,14 @@ class MagnetDialog(QDialog):
         # 按季排序：同一季相邻 → 季号大在前 → 同季集号大在前（最新一集在最上）
         ordered = sort_episode_groups(groups)
 
-        all_btn = QPushButton("发送全部磁力到下载器")
+        all_btn = QPushButton("发送全部可下载资源到下载器")
         all_btn.setObjectName("primary")
         all_btn.clicked.connect(lambda: self._send_all())
         lay.addWidget(all_btn, 0, Qt.AlignmentFlag.AlignRight)
+        if any(getattr(m, "kind", "magnet") == "pan" for m in self._item.magnets):
+            tip = QLabel("🌐 网盘/非种子附件仅支持复制，不推送下载器")
+            tip.setStyleSheet("color:#f59e0b; font-size:11px;")
+            lay.addWidget(tip)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -249,6 +255,7 @@ class MagnetDialog(QDialog):
             for ml in magnets:
                 full_label = (ml.label or "").strip()
                 full_url = (ml.url or "").strip()
+                is_pan = getattr(ml, "kind", "magnet") == "pan"
 
                 row_widget = QWidget()
                 row_bg = row_bg_2 if (row_idx % 2 == 1) else row_bg_1
@@ -273,8 +280,11 @@ class MagnetDialog(QDialog):
                 row.addWidget(name_lab, 1)
 
                 # 磁力链接小标签：悬停查看完整磁力，双击复制
-                link_tip = f"磁力链接：{full_url}\n（双击复制完整链接）"
-                link_lab = ClickableLabel("🔗 [磁力]", full_url)
+                link_tip = (f"网盘/附件：{full_url}\n（双击复制完整链接）"
+                            if is_pan else
+                            f"磁力链接：{full_url}\n（双击复制完整链接）")
+                link_lab = ClickableLabel("🌐 [网盘]" if is_pan else "🔗 [磁力]",
+                                          full_url)
                 link_lab.setToolTip(link_tip)
                 link_lab.setStyleSheet(
                     f"color: {link_color}; font-size: 11px; padding: 2px 6px; "
@@ -284,18 +294,19 @@ class MagnetDialog(QDialog):
                 row.addWidget(link_lab, 0)
 
                 # 操作按钮：固定右侧，确保在任何窗口宽度下都完整显示
-                b_send = QPushButton("发送")
-                b_send.setObjectName("primary")
-                b_send.setFixedSize(54, 26)
-                b_send.setCursor(Qt.CursorShape.PointingHandCursor)
-                b_send.clicked.connect(lambda _=False, u=full_url: self._send(u))
+                if not is_pan:
+                    b_send = QPushButton("发送")
+                    b_send.setObjectName("primary")
+                    b_send.setFixedSize(54, 26)
+                    b_send.setCursor(Qt.CursorShape.PointingHandCursor)
+                    b_send.clicked.connect(lambda _=False, u=full_url: self._send(u))
+                    row.addWidget(b_send, 0)
 
                 b_copy = QPushButton("复制")
                 b_copy.setFixedSize(54, 26)
                 b_copy.setCursor(Qt.CursorShape.PointingHandCursor)
                 b_copy.clicked.connect(lambda _=False, u=full_url: self._copy(u))
 
-                row.addWidget(b_send, 0)
                 row.addWidget(b_copy, 0)
                 v.addWidget(row_widget)
 
@@ -317,7 +328,8 @@ class MagnetDialog(QDialog):
 
     def _send_all(self) -> None:
         for m in list(self._item.magnets):
-            self._on_send(self._item, m.url)
+            if getattr(m, "kind", "magnet") in ("magnet", "torrent"):
+                self._on_send(self._item, m.url)
 
     def _do_sub(self) -> None:
         if self._on_subscribe:
@@ -327,9 +339,12 @@ class MagnetDialog(QDialog):
 class WorkbenchPage(QWidget):
     parse_clicked = Signal()
     stop_clicked = Signal()
+    sites_changed = Signal(list)   # 勾选变化后发出（站点 id 列表）
 
-    def __init__(self, parent=None):
+    def __init__(self, db=None, cfg=None, parent=None):
         super().__init__(parent)
+        self.db = db
+        self.cfg = cfg
         self._items: list = []
         self._base_items: list = []
         self._row_index: dict = {}
@@ -354,6 +369,13 @@ class WorkbenchPage(QWidget):
             "font-weight: 600; padding: 4px 10px; border-radius: 12px; background: rgba(59, 130, 246, 0.12); color: #3b82f6;"
         )
         bar.addWidget(self.mirror_label)
+
+        self.btn_sites = QPushButton("🗺 解析站点")
+        self.btn_sites.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sites.setToolTip("勾选本次解析要抓取的站点（可多选）")
+        self.btn_sites.clicked.connect(self._open_site_menu)
+        bar.addWidget(self.btn_sites)
+
         bar.addStretch(1)
 
         self.status_label = QLabel("● 待激活 · 尚未解析")
@@ -473,6 +495,58 @@ class WorkbenchPage(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status_label.setText(text)
+
+    # ------------------------------------------------------------ 站点多选
+    def _selected_site_ids(self) -> list:
+        if not self.cfg:
+            return []
+        out = []
+        for x in (self.cfg.get("enabled_sites") or []):
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _open_site_menu(self) -> None:
+        sites = []
+        if self.db is not None:
+            try:
+                sites = self.db.list_sites(enabled_only=True)
+            except Exception:
+                sites = []
+        if not sites:
+            QMessageBox.information(self, "提示",
+                                    "尚无启用的解析站点，请先到设置页添加/启用")
+            return
+        selected = self._selected_site_ids()
+        menu = QMenu(self)
+        act_all = menu.addAction("全选")
+        act_none = menu.addAction("全不选")
+        menu.addSeparator()
+        actions = []
+        for s in sites:
+            act = menu.addAction(f"{s.name}（{s.module_id}）")
+            act.setCheckable(True)
+            act.setChecked((s.id in selected) if selected else True)
+            actions.append((s.id, act))
+        chosen = menu.exec(self.btn_sites.mapToGlobal(
+            QPoint(0, self.btn_sites.height())))
+        if chosen is None:
+            return
+        if chosen is act_all:
+            ids = [s.id for s in sites]
+        elif chosen is act_none:
+            ids = []
+        else:
+            ids = [sid for sid, act in actions if act.isChecked()]
+        if self.cfg is not None:
+            self.cfg["enabled_sites"] = ids
+            try:
+                self.cfg.save()
+            except Exception:
+                pass
+        self.sites_changed.emit(ids)
 
     def append_log(self, line: str) -> None:
         self.console.appendPlainText(f"[{fmt_time()}] {line}")

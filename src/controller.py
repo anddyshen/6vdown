@@ -86,6 +86,10 @@ class Controller(QObject):
         wb = self.window.workbench
         wb.parse_clicked.connect(self.ask_start_parse)
         wb.stop_clicked.connect(self.stop_parse)
+        try:
+            wb.sites_changed.connect(lambda _ids: self.refresh_source_label())
+        except Exception:
+            pass
         wb.on_magnet_list = self.open_magnet_dialog
         wb.on_add_single = self.add_item_to_downloader
         wb.on_subscribe = self.subscribe_item
@@ -288,7 +292,13 @@ class Controller(QObject):
         if not item.magnets:
             self.notify_tip("无磁力可添加", f"{item.title} 暂未解析到磁力链接。")
             return
-        for m in item.magnets:
+        sendable = [m for m in item.magnets
+                    if getattr(m, "kind", "magnet") in ("magnet", "torrent")]
+        if not sendable:
+            self.notify_tip("无可发送资源",
+                            f"{item.title} 仅含网盘/附件链接（可在详情中复制）。")
+            return
+        for m in sendable:
             self.send(m.url, item.title or "", "site")
 
     def open_magnet_dialog(self, item) -> None:
@@ -334,21 +344,49 @@ class Controller(QObject):
         elif clicked is b_view:
             self.start_parse(show_console=True)
 
+    def refresh_source_label(self) -> None:
+        """按工作台勾选的站点刷新“解析源”显示（支持多选）。"""
+        try:
+            wb = self.window.workbench
+        except Exception:
+            return
+        try:
+            sites = self.db.list_sites(enabled_only=True)
+        except Exception:
+            sites = []
+        sel = []
+        for x in (self.cfg.get("enabled_sites") or []):
+            try:
+                sel.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        picked = ([s for s in sites if s.id in sel] if sel else list(sites))
+        if not picked:
+            wb.mirror_label.setText("解析源：无可用站点（请到设置页启用）")
+            return
+        if len(picked) == 1:
+            s = picked[0]
+            wb.mirror_label.setText(
+                f"解析源：{s.name}" + (f"（{s.entries()[0]}）" if s.entries() else ""))
+            return
+        names = "、".join(s.name for s in picked[:3])
+        wb.mirror_label.setText(
+            f"解析源：{len(picked)} 个站点（{names}"
+            + (" 等" if len(picked) > 3 else "") + "）")
+
     def start_parse(self, show_console: bool = False) -> None:
         if self._parse and self._parse.isRunning():
             return
         self.service.ensure_mirrors()
-        cur = self.db.current_mirror_url()
-        if cur:
-            self.window.workbench.mirror_label.setText(f"解析源：{cur}")
-        else:
-            self.window.workbench.mirror_label.setText("解析源：将自动探测可用域名")
+        self.refresh_source_label()
         worker = ParseWorker(
             self.service,
             enabled_blocks=self.cfg["enabled_blocks"],
             include_unknown=True,
             fetch_detail=self.cfg["fetch_detail"],
             polite_delay=float(self.cfg["polite_delay"]),
+            sites=list(self.cfg.get("enabled_sites") or []),
+            concurrency=int(self.cfg.get("detail_concurrency", 2) or 1),
         )
         worker.log_line.connect(self.window.workbench.append_log)
         worker.done.connect(self._on_parse_done)
@@ -374,9 +412,14 @@ class Controller(QObject):
             self._parse.deleteLater()
         self._parse = None
         ok = bool(summary.get("ok"))
-        site = summary.get("site", "")
-        if site:
-            self.window.workbench.mirror_label.setText(f"解析源：{site}")
+        site_rows = summary.get("sites") or []
+        if site_rows:
+            names = [r.get("name") or r.get("site") or "" for r in site_rows]
+            names = [n for n in names if n]
+            if names:
+                self.window.workbench.mirror_label.setText(
+                    f"解析源：{'、'.join(names[:3])}"
+                    + (" 等" if len(names) > 3 else ""))
         items = summary.get("items") or summary.get("all_items") or []
         n = summary.get("new", 0)
         u = summary.get("updated", 0)

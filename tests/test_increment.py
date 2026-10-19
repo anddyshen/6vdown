@@ -88,7 +88,7 @@ class TestIncrement(unittest.TestCase):
         self.assertTrue(s["ok"], s.get("error"))
         self.assertEqual(s["new"], 2)
         self.assertEqual(s["updated"], 0)
-        rows = self._by_url(s["site"])
+        rows = self._by_url(SITE)
         self.assertIn(COACH_URL, rows)
         self.assertEqual(rows[COACH_URL].title, "《足球教练》第四季05")
         self.assertEqual(len(rows[COACH_URL].magnets), 2)
@@ -105,7 +105,7 @@ class TestIncrement(unittest.TestCase):
         self.assertEqual(s["updated"], 1, "集数前进必须被识别为更新")
         self.assertIn(COACH_URL, s["updated_urls"])
 
-        rows = self._by_url(s["site"])
+        rows = self._by_url(SITE)
         self.assertEqual(len(rows), 2, "更新不应产生重复记录")
         coach = rows[COACH_URL]
         self.assertEqual(coach.title, "《足球教练》第四季06")
@@ -121,7 +121,7 @@ class TestIncrement(unittest.TestCase):
         s = self._run()
         self.assertEqual(s["new"], 0)
         self.assertEqual(s["updated"], 0)
-        self.assertEqual(len(self._by_url(s["site"])), 2)
+        self.assertEqual(len(self._by_url(SITE)), 2)
 
 
 if __name__ == "__main__":

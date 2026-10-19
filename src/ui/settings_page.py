@@ -1,6 +1,7 @@
 """设置页：下载主机 / 站点与镜像 / 通用设置。"""
 from __future__ import annotations
 
+import os
 import re
 import time
 
@@ -8,13 +9,14 @@ from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSpinBox, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QListWidget, QListWidgetItem, QPlainTextEdit, QProgressBar, QPushButton,
+    QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .. import constants
 from ..downloader import DownloaderManager
-from ..models import MirrorSite
+from ..models import MirrorSite, SiteInstance
+from ..site.modules import list_modules
 from .host_dialog import HostDialog
 from .workers import TestHostRunnable
 
@@ -76,6 +78,78 @@ class MirrorDialog(QDialog):
         self.accept()
 
 
+class SiteDialog(QDialog):
+    """新增 / 编辑解析站点：名称 + 模块 + 入口地址（每行一个）+ 启用。"""
+
+    def __init__(self, site=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("编辑站点" if site else "添加解析站点")
+        self.setMinimumWidth(520)
+        self.result_site = None
+        form = QFormLayout(self)
+        self.edit_name = QLineEdit(site.name if site else "")
+        self.edit_name.setPlaceholderText("如：电影港")
+        form.addRow("站点名称", self.edit_name)
+
+        self.module_combo = NoWheelComboBox()
+        for meta in list_modules():
+            self.module_combo.addItem(f"{meta.name}（{meta.module_id}）",
+                                      meta.module_id)
+        if site:
+            i = self.module_combo.findData(site.module_id)
+            if i >= 0:
+                self.module_combo.setCurrentIndex(i)
+        form.addRow("解析模块", self.module_combo)
+
+        self.edit_entries = QPlainTextEdit()
+        self.edit_entries.setPlaceholderText(
+            "每行一个入口地址，如：\nhttps://www.dygang.tv/\n\n"
+            "留空 = 使用上方“镜像域名”池（仅 hao6v 模板支持）")
+        self.edit_entries.setPlainText(
+            "\n".join(site.entries()) if site else "")
+        self.edit_entries.setMaximumHeight(110)
+        form.addRow("入口地址", self.edit_entries)
+
+        self.edit_note = QLineEdit((site.note or "") if site else "")
+        self.edit_note.setPlaceholderText("可选，如：发布页 dygang.me")
+        form.addRow("备注", self.edit_note)
+
+        self.chk_enabled = QCheckBox("启用该站点（参与解析）")
+        self.chk_enabled.setChecked(bool(site.enabled) if site else True)
+        form.addRow("", self.chk_enabled)
+
+        btns = QHBoxLayout()
+        ok = QPushButton("确定")
+        ok.setObjectName("primary")
+        ok.clicked.connect(self._accept)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        btns.addStretch(1)
+        btns.addWidget(ok)
+        btns.addWidget(cancel)
+        form.addRow(btns)
+
+    def _accept(self) -> None:
+        name = (self.edit_name.text() or "").strip()
+        if not name:
+            QMessageBox.warning(self, "提示", "请输入站点名称")
+            return
+        module_id = self.module_combo.currentData()
+        entries = []
+        for line in (self.edit_entries.toPlainText() or "").splitlines():
+            u = line.strip()
+            if not u:
+                continue
+            if "://" not in u:
+                u = "https://" + u
+            entries.append(u.rstrip("/") + "/")
+        self.result_site = SiteInstance(
+            module_id=module_id, name=name, entry_urls=entries,
+            enabled=self.chk_enabled.isChecked(),
+            note=(self.edit_note.text() or "").strip())
+        self.accept()
+
+
 class SettingsPage(QWidget):
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -93,8 +167,11 @@ class SettingsPage(QWidget):
         v = QVBoxLayout(body)
         v.addWidget(self._host_group())
         v.addWidget(self._mirror_group())
+        v.addWidget(self._site_group())
         v.addWidget(self._subscription_group())
         v.addWidget(self._emby_group())
+        v.addWidget(self._ai_group())
+        v.addWidget(self._modules_group())
         v.addWidget(self._general_group())
         v.addStretch(1)
         body.setLayout(v)
@@ -394,6 +471,198 @@ class SettingsPage(QWidget):
     def set_mirror_log(self, text: str) -> None:
         self.mirror_log.setText(text)
 
+    # ============================================================ 解析站点
+    def _site_group(self) -> QWidget:
+        g = QGroupBox("🗺️ 解析站点（多站点模块；勾选解析范围请在“解析工作台”顶部按钮）")
+        lay = QVBoxLayout(g)
+        self.site_table = QTableWidget(0, 5)
+        self.site_table.setHorizontalHeaderLabels(
+            ["站点", "模块", "入口", "启用", "操作"])
+        hh = self.site_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.site_table.verticalHeader().setVisible(False)
+        self.site_table.verticalHeader().setDefaultSectionSize(36)
+        self.site_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.site_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.site_table.setMinimumHeight(170)
+        lay.addWidget(self.site_table)
+        row = QHBoxLayout()
+        for text, fn in (("添加站点", self._site_add), ("编辑", self._site_edit_sel),
+                         ("删除", self._site_del_sel)):
+            b = QPushButton(text)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, f=fn: f())
+            row.addWidget(b)
+        row.addStretch(1)
+        self.btn_site_probe = QPushButton("检测入口可用性")
+        self.btn_site_probe.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_site_probe.clicked.connect(self._site_probe)
+        row.addWidget(self.btn_site_probe)
+        lay.addLayout(row)
+        self.site_log = QLabel("")
+        self.site_log.setStyleSheet("color:#64748b; font-size:12px;")
+        self.site_log.setWordWrap(True)
+        lay.addWidget(self.site_log)
+        self.site_probe_bar = QProgressBar()
+        self.site_probe_bar.setRange(0, 0)
+        self.site_probe_bar.setTextVisible(False)
+        self.site_probe_bar.setFixedHeight(8)
+        self.site_probe_bar.hide()
+        lay.addWidget(self.site_probe_bar)
+        self.site_table.itemDoubleClicked.connect(
+            lambda _it: self._site_edit_sel())
+        return g
+
+    def reload_sites(self) -> None:
+        sites = self.db.list_sites()
+        self.site_table.setRowCount(0)
+        self.site_table.setRowCount(len(sites))
+        for r, s in enumerate(sites):
+            self.site_table.setItem(r, 0, QTableWidgetItem(s.name or ""))
+            self.site_table.setItem(r, 1, QTableWidgetItem(s.module_id))
+            entries = s.entries()
+            self.site_table.setItem(r, 2, QTableWidgetItem(
+                "\n".join(entries) if entries else "（镜像域名池）"))
+            self.site_table.setItem(r, 3, QTableWidgetItem("✓" if s.enabled else ""))
+            cell = QWidget()
+            hl = QHBoxLayout(cell)
+            hl.setContentsMargins(4, 2, 4, 2)
+            hl.setSpacing(6)
+            b_edit = QPushButton("编辑")
+            b_edit.setFixedSize(50, 26)
+            b_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+            b_edit.clicked.connect(lambda _=False, sid=s.id: self._site_edit(sid))
+            b_del = QPushButton("删除")
+            b_del.setFixedSize(50, 26)
+            b_del.setCursor(Qt.CursorShape.PointingHandCursor)
+            b_del.clicked.connect(lambda _=False, sid=s.id: self._site_del(sid))
+            hl.addWidget(b_edit)
+            hl.addWidget(b_del)
+            hl.addStretch(1)
+            self.site_table.setCellWidget(r, 4, cell)
+            self.site_table.setRowHeight(r, 38)
+        if not sites:
+            self.site_log.setText("（暂无站点实例，重新打开本页会自动补写内置站点）")
+        else:
+            self.site_log.setText(self._site_selection_text())
+
+    def _site_selection_text(self) -> str:
+        """显示工作台当前勾选的解析范围。"""
+        try:
+            sites = self.db.list_sites(enabled_only=True)
+        except Exception:
+            return ""
+        sel = []
+        for x in (self.cfg.get("enabled_sites") or []):
+            try:
+                sel.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        picked = ([s for s in sites if s.id in sel] if sel else list(sites))
+        if not picked:
+            return "当前无可用站点：请先在上方启用至少一个站点。"
+        if len(picked) == len(sites):
+            return f"解析范围：全部 {len(picked)} 个启用站点（工作台可改）"
+        return ("解析范围：" + "、".join(s.name for s in picked)
+                + "（工作台可改）")
+
+    def _selected_site(self):
+        sel = self.site_table.selectionModel().selectedRows()
+        if not sel:
+            return None
+        sites = self.db.list_sites()
+        r = sel[0].row()
+        return sites[r] if r < len(sites) else None
+
+    def _site_add(self) -> None:
+        dlg = SiteDialog(None, self)
+        if dlg.exec() and dlg.result_site:
+            self.db.upsert_site(dlg.result_site)
+            self.reload_sites()
+
+    def _site_edit_sel(self) -> None:
+        s = self._selected_site()
+        if not s:
+            QMessageBox.information(self, "提示", "请先选中一行站点")
+            return
+        self._site_edit(s.id)
+
+    def _site_edit(self, site_id) -> None:
+        s = self.db.get_site(site_id)
+        if not s:
+            return
+        dlg = SiteDialog(s, self)
+        if not (dlg.exec() and dlg.result_site):
+            return
+        ns = dlg.result_site
+        ns.id = s.id
+        ns.is_current = s.is_current
+        self.db.upsert_site(ns)
+        self.reload_sites()
+
+    def _site_del_sel(self) -> None:
+        s = self._selected_site()
+        if not s:
+            QMessageBox.information(self, "提示", "请先选中一行站点")
+            return
+        self._site_del(s.id)
+
+    def _site_del(self, site_id) -> None:
+        s = self.db.get_site(site_id)
+        if not s:
+            return
+        if len(self.db.list_sites()) <= 1:
+            QMessageBox.warning(self, "无法删除", "至少需要保留一个站点实例")
+            return
+        if QMessageBox.question(self, "确认", f"删除站点 {s.name} ？") != \
+                QMessageBox.StandardButton.Yes:
+            return
+        self.db.delete_site(site_id)
+        self.reload_sites()
+        try:
+            self.ctl.refresh_source_label()
+        except Exception:
+            pass
+
+    def _site_probe(self) -> None:
+        s = self._selected_site()
+        if not s:
+            QMessageBox.information(self, "提示", "请先选中一行站点")
+            return
+        urls = s.entries()
+        if not urls:
+            QMessageBox.information(self, "提示",
+                                    "该站点使用镜像域名池，请用上方“检测全部可用性”")
+            return
+        self.set_site_busy(True)
+        self.site_log.setText("正在检测入口可用性，请稍候……")
+        worker = MirrorProbeWorker(self.db, urls)
+        worker.log.connect(self.site_log.setText)
+        worker.done.connect(self._on_site_probe_done)
+        self._site_probe_worker = worker
+        worker.start()
+
+    def _on_site_probe_done(self, result: dict) -> None:
+        self.set_site_busy(False)
+        ok = [u for u, (good, _n, _l) in result.items() if good]
+        bad = [u for u, (good, _n, _l) in result.items() if not good]
+        parts = []
+        if ok:
+            parts.append(f"可用 {len(ok)} 个")
+        if bad:
+            parts.append(f"不可用 {len(bad)} 个（详见日志）")
+        self.site_log.setText("检测完成：" + ("；".join(parts) or "无入口"))
+
+    def set_site_busy(self, busy: bool) -> None:
+        busy = bool(busy)
+        if busy:
+            self.site_probe_bar.show()
+        else:
+            self.site_probe_bar.hide()
+        btn = getattr(self, "btn_site_probe", None)
+        if btn is not None:
+            btn.setEnabled(not busy)
+
     # ============================================================ 订阅与画质
     def _subscription_group(self) -> QWidget:
         g = QGroupBox("📺 订阅与自动追剧偏好")
@@ -413,20 +682,36 @@ class SettingsPage(QWidget):
         self.sub_sched_spin.setSuffix(" 小时")
         form.addRow("定时检查间隔", self.sub_sched_spin)
 
-        # 画质优先级（默认 1080P > 4K > 720P > 其它）
+        # 画质优先级（可拖动排序；默认 1080P > 4K > 720P > 其它）
         q_box = QWidget()
         q_lay = QHBoxLayout(q_box)
         q_lay.setContentsMargins(0, 0, 0, 0)
-        self.q_labels = ["1080P", "4K", "720P", "OTHER"]
-        self.q_display = QLabel("当前默认执行顺序：<b>1080P</b> ➔ 4K ➔ 720P ➔ 其它未知画质")
-        self.q_display.setStyleSheet("color: #3b82f6; font-size: 12px;")
-        q_lay.addWidget(self.q_display)
-        form.addRow("下载画质优先级", q_box)
+        self.q_list = QListWidget()
+        self.q_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.q_list.setFixedHeight(118)
+        self.q_list.setSpacing(2)
+        q_lay.addWidget(self.q_list, 1)
+        btn_q_reset = QPushButton("恢复默认")
+        btn_q_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_q_reset.clicked.connect(self._reset_quality_priority)
+        q_lay.addWidget(btn_q_reset, 0, Qt.AlignmentFlag.AlignTop)
+        form.addRow("下载画质优先级（拖动排序）", q_box)
 
-        tip = QLabel("当某集剧集同时发布多个不同版本时，优先根据上述顺序选取单条最优磁力，防止重复下载。")
+        tip = QLabel("当某集剧集同时发布多个不同版本时，按列表从上到下选取第一条命中的画质，防止重复下载。")
         tip.setStyleSheet("color: #64748b; font-size: 11px;")
         form.addRow("", tip)
         return g
+
+    def _reload_quality_list(self, order=None) -> None:
+        self.q_list.clear()
+        for lab in (order or self.cfg.get("quality_priority")
+                    or ["1080P", "4K", "720P", "OTHER"]):
+            item = QListWidgetItem(str(lab))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.q_list.addItem(item)
+
+    def _reset_quality_priority(self) -> None:
+        self._reload_quality_list(["1080P", "4K", "720P", "OTHER"])
 
     # ============================================================ Emby 联动
     def _emby_group(self) -> QWidget:
@@ -472,6 +757,202 @@ class SettingsPage(QWidget):
         else:
             self.emby_status_lab.setStyleSheet("font-size: 12px; color: red;")
 
+    # ============================================================ AI 助手
+    def _ai_group(self) -> QWidget:
+        g = QGroupBox("🤖 AI 助手（仅用于“新站点解析规则生成”，可完全关闭）")
+        form = QFormLayout(g)
+
+        self.chk_ai = QCheckBox("启用 AI 助手（未启用时新模块向导只用本地推导）")
+        self.chk_ai.toggled.connect(self._ai_toggle)
+        form.addRow("", self.chk_ai)
+
+        self.ai_provider_combo = NoWheelComboBox()
+        for key, lab in (("external", "外部 API（DeepSeek / OpenAI 兼容服务）"),
+                         ("local", "本机（Ollama / LM Studio）")):
+            self.ai_provider_combo.addItem(lab, key)
+        self.ai_provider_combo.currentIndexChanged.connect(self._ai_provider_changed)
+        form.addRow("服务提供商", self.ai_provider_combo)
+
+        self.edit_ai_url = QLineEdit()
+        form.addRow("服务地址 base_url", self.edit_ai_url)
+
+        self.edit_ai_model = QLineEdit()
+        form.addRow("模型名 model", self.edit_ai_model)
+
+        self.edit_ai_key = QLineEdit()
+        self.edit_ai_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit_ai_key.setPlaceholderText("本机 Ollama 一般无需填写")
+        form.addRow("API Key", self.edit_ai_key)
+
+        test_row = QHBoxLayout()
+        self.btn_ai_test = QPushButton("测试连接")
+        self.btn_ai_test.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_test.clicked.connect(self._ai_test)
+        test_row.addWidget(self.btn_ai_test)
+        self.btn_ai_wizard = QPushButton("🧭 新模块向导")
+        self.btn_ai_wizard.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ai_wizard.clicked.connect(self._ai_open_wizard)
+        test_row.addWidget(self.btn_ai_wizard)
+        self.ai_status_lab = QLabel("")
+        self.ai_status_lab.setStyleSheet("font-size:12px; color:#64748b;")
+        self.ai_status_lab.setWordWrap(True)
+        test_row.addWidget(self.ai_status_lab, 1)
+        form.addRow("", test_row)
+
+        tip = QLabel(
+            "用途：给新站点自动生成解析规则（向导里可预览与修改）。\n"
+            "· 发送内容 = 你主动分析的那个站点的页面样本（已去掉脚本/样式），不含账号信息；\n"
+            "· API Key 用 Windows DPAPI 加密保存在本机配置中；\n"
+            "· AI 结果必须经本地校验（结构 + 实测解析条数）才可采用，失败自动降级为本地推导。")
+        tip.setStyleSheet("color:#64748b; font-size:11px;")
+        tip.setWordWrap(True)
+        form.addRow("", tip)
+        return g
+
+    def _ai_toggle(self, on: bool) -> None:
+        for w in (self.ai_provider_combo, self.edit_ai_url, self.edit_ai_model,
+                  self.edit_ai_key, self.btn_ai_test):
+            w.setEnabled(bool(on))
+
+    def _ai_provider_changed(self, _idx: int) -> None:
+        from ..site.ai_client import provider_defaults
+
+        key = self.ai_provider_combo.currentData()
+        url, model, need_key = provider_defaults(key)
+        if not (self.edit_ai_url.text() or "").strip():
+            self.edit_ai_url.setText(url)
+            self.edit_ai_url.setPlaceholderText(url)
+        if not (self.edit_ai_model.text() or "").strip():
+            self.edit_ai_model.setText(model)
+            self.edit_ai_model.setPlaceholderText(model)
+        self.edit_ai_key.setEnabled(need_key and self.chk_ai.isChecked())
+
+    def _ai_test(self) -> None:
+        from ..site.ai_client import test_connection
+
+        cfg = dict(self.cfg.data)
+        cfg["ai_enabled"] = True
+        cfg["ai_base_url"] = self.edit_ai_url.text().strip()
+        cfg["ai_model"] = self.edit_ai_model.text().strip()
+        cfg["ai_api_key_enc"] = self._ai_key_token(self.edit_ai_key.text())
+        ok, msg = test_connection(cfg, timeout=15)
+        self.ai_status_lab.setText(("✓ " if ok else "✗ ") + msg)
+        self.ai_status_lab.setStyleSheet(
+            "font-size:12px; color:green;" if ok else "font-size:12px; color:red;")
+
+    def _ai_key_token(self, plain: str) -> str:
+        """明文 Key → 加密 token；留空表示沿用已保存的 Key。"""
+        from ..dpapi import encrypt_text
+
+        plain = (plain or "").strip()
+        return encrypt_text(plain) if plain else \
+            str(self.cfg.get("ai_api_key_enc", "") or "")
+
+    def _ai_open_wizard(self) -> None:
+        try:
+            from .analyze_dialog import AnalyzeDialog
+
+            dlg = AnalyzeDialog(self.ctl, self)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.warning(self, "无法打开向导", f"{type(e).__name__}: {e}")
+
+    # ============================================================ 自定义模块
+    def _modules_group(self) -> QWidget:
+        g = QGroupBox("🧩 自定义模块与健康度")
+        lay = QVBoxLayout(g)
+        self.mods_table = QTableWidget(0, 4)
+        self.mods_table.setHorizontalHeaderLabels(
+            ["模块 ID", "名称", "来源", "健康度"])
+        hh = self.mods_table.horizontalHeader()
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.mods_table.verticalHeader().setVisible(False)
+        self.mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.mods_table.setMinimumHeight(140)
+        lay.addWidget(self.mods_table)
+
+        row = QHBoxLayout()
+        for text, fn in (("🧭 新建模块", self._ai_open_wizard),
+                         ("删除模块", self._mod_delete),
+                         ("打开规则目录", self._mod_open_dir),
+                         ("重新加载", self._mod_reload)):
+            b = QPushButton(text)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, f=fn: f())
+            row.addWidget(b)
+        row.addStretch(1)
+        lay.addLayout(row)
+
+        tip = QLabel(
+            "· 用户规则放 data/modules/<id>.json，**同 ID 会覆盖内置模块**"
+            "（站点改版时可先改规则应急）；\n"
+            "· 健康度 = 最近一次解析的条目数与资源命中率；连续 0 条会黄字提示“可能已改版”，"
+            "此时可用上方向导重新分析。")
+        tip.setStyleSheet("color:#64748b; font-size:11px;")
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
+        return g
+
+    def reload_modules(self) -> None:
+        from ..site.modules import list_modules
+        from ..site.modules.health import describe, load
+        from ..site.modules.rule_store import list_rule_files, rules_dir
+
+        user_files = {os.path.basename(p)[:-5].lower()
+                      for p in list_rule_files(user_only=True)}
+        mods = sorted(list_modules(), key=lambda m: (m.builtin, m.module_id))
+        self.mods_table.setRowCount(0)
+        self.mods_table.setRowCount(len(mods))
+        for r, meta in enumerate(mods):
+            src = "用户规则" if meta.module_id.lower() in user_files else "内置模块"
+            info = load(self.db, meta.module_id)
+            self.mods_table.setItem(r, 0, QTableWidgetItem(meta.module_id))
+            self.mods_table.setItem(r, 1, QTableWidgetItem(meta.name or ""))
+            self.mods_table.setItem(r, 2, QTableWidgetItem(src))
+            lab = QTableWidgetItem(describe(info))
+            if info.get("warn"):
+                lab.setForeground(Qt.GlobalColor.darkYellow)
+            self.mods_table.setItem(r, 3, lab)
+        self._rules_dir = rules_dir()
+
+    def _mod_selected_id(self) -> str:
+        sel = self.mods_table.selectionModel().selectedRows()
+        if not sel:
+            return ""
+        return (self.mods_table.item(sel[0].row(), 0).text() or "").strip()
+
+    def _mod_delete(self) -> None:
+        mid = self._mod_selected_id()
+        if not mid:
+            QMessageBox.information(self, "提示", "请先选中一个模块")
+            return
+        from ..site.modules.rule_store import delete_rule
+
+        if not delete_rule(mid):
+            QMessageBox.information(
+                self, "提示",
+                f"「{mid}」没有对应的用户规则文件（内置模块不能删除）")
+            return
+        self._mod_reload()
+
+    def _mod_open_dir(self) -> None:
+        path = getattr(self, "_rules_dir", "") or rules_dir()
+        try:
+            os.makedirs(path, exist_ok=True)
+            os.startfile(path)  # noqa: S606  仅打开本机目录
+        except Exception as e:
+            QMessageBox.information(self, "规则目录", f"{path}\n（{e}）")
+
+    def _mod_reload(self) -> None:
+        from ..site.modules.registry import reload_external_modules
+
+        n = reload_external_modules()
+        self.reload_modules()
+        self.reload_sites()
+        self.mods_log_hint = f"已重新加载，用户规则模块 {n} 个"
+
     # ============================================================ 通用
     def _general_group(self) -> QWidget:
         g = QGroupBox("⚙️ 通用偏好设置")
@@ -516,6 +997,17 @@ class SettingsPage(QWidget):
                          ("last", "记住上次关闭时的状态")):
             self.clip_start_combo.addItem(lab, key)
         form.addRow("启动时剪贴板监听", self.clip_start_combo)
+
+        self.conc_spin = QSpinBox()
+        self.conc_spin.setRange(1, 8)
+        self.conc_spin.setSuffix(" 个")
+        form.addRow("详情页并发抓取", self.conc_spin)
+        conc_tip = QLabel(
+            "同时抓取几个详情页：1=最礼貌（串行）；慢站点（如论坛）可调到 3-4 提速。"
+            "相同详情页在同一次解析中只会抓一次（跨版块自动去重）。")
+        conc_tip.setStyleSheet("color:#64748b; font-size:11px;")
+        conc_tip.setWordWrap(True)
+        form.addRow("", conc_tip)
 
         box = QGroupBox("解析区块（解析时仅覆盖勾选的区块）")
         blay = QHBoxLayout(box)
@@ -601,6 +1093,7 @@ class SettingsPage(QWidget):
         c["parse_default"] = self.parse_default_combo.currentData()
         c["start_behavior"] = self.start_behavior_combo.currentData()
         c["clip_start"] = self.clip_start_combo.currentData()
+        c["detail_concurrency"] = self.conc_spin.value()
         c["enabled_blocks"] = [cb.text().replace("★ ", "")
                                for cb in self.block_checks if cb.isChecked()]
         # 订阅与 Emby
@@ -608,9 +1101,17 @@ class SettingsPage(QWidget):
         c["sub_auto_direct_download"] = self.chk_sub_direct.isChecked()
         c["sub_scheduler_enabled"] = self.chk_sub_sched.isChecked()
         c["sub_interval_hours"] = self.sub_sched_spin.value()
+        c["quality_priority"] = [self.q_list.item(i).text()
+                                 for i in range(self.q_list.count())]
         c["emby_enabled"] = self.chk_emby.isChecked()
         c["emby_server_url"] = self.edit_emby_url.text().strip()
         c["emby_api_key"] = self.edit_emby_key.text().strip()
+        # AI 助手（Key 加密存储）
+        c["ai_enabled"] = self.chk_ai.isChecked()
+        c["ai_provider"] = self.ai_provider_combo.currentData() or "external"
+        c["ai_base_url"] = self.edit_ai_url.text().strip()
+        c["ai_model"] = self.edit_ai_model.text().strip()
+        c["ai_api_key_enc"] = self._ai_key_token(self.edit_ai_key.text())
         c.save()
         self.ctl.apply_settings()
         self.ctl.notify_ok("设置已保存", "下载主机、订阅与 Emby 偏好已生效。")
@@ -618,6 +1119,8 @@ class SettingsPage(QWidget):
     def reload(self) -> None:
         self.reload_hosts()
         self.reload_mirrors()
+        self.reload_sites()
+        self.reload_modules()
         c = self.cfg
         self._set_combo(self.theme_combo, c["theme"])
         self._set_combo(self.http_combo, c["http_mode"])
@@ -628,6 +1131,7 @@ class SettingsPage(QWidget):
         self._set_combo(self.parse_default_combo, c.get("parse_default", "ask"))
         self._set_combo(self.start_behavior_combo, c.get("start_behavior", "window"))
         self._set_combo(self.clip_start_combo, c.get("clip_start", "last"))
+        self.conc_spin.setValue(int(c.get("detail_concurrency", 2) or 1))
         self.toast_spin.setValue(int(c["notify_seconds"]))
         enabled = set(c["enabled_blocks"])
         for cb in self.block_checks:
@@ -637,9 +1141,22 @@ class SettingsPage(QWidget):
         self.chk_sub_direct.setChecked(bool(c.get("sub_auto_direct_download", False)))
         self.chk_sub_sched.setChecked(bool(c.get("sub_scheduler_enabled", True)))
         self.sub_sched_spin.setValue(int(c.get("sub_interval_hours", 4)))
+        self._reload_quality_list(c.get("quality_priority"))
         self.chk_emby.setChecked(bool(c.get("emby_enabled", False)))
         self.edit_emby_url.setText(c.get("emby_server_url", ""))
         self.edit_emby_key.setText(c.get("emby_api_key", ""))
+        # AI 助手（Key 不明文回填：已保存显示占位，留空=沿用）
+        self.chk_ai.setChecked(bool(c.get("ai_enabled", False)))
+        self._set_combo(self.ai_provider_combo, c.get("ai_provider", "external"))
+        self.edit_ai_url.setText(c.get("ai_base_url", ""))
+        self.edit_ai_model.setText(c.get("ai_model", ""))
+        from ..dpapi import decrypt_text
+
+        saved_key = decrypt_text(c.get("ai_api_key_enc", "") or "")
+        self.edit_ai_key.setText(saved_key)
+        self.edit_ai_key.setPlaceholderText(
+            "已保存的 Key 已解密显示；本机 Ollama 可留空")
+        self._ai_toggle(self.chk_ai.isChecked())
 
     @staticmethod
     def _set_combo(combo: QComboBox, key) -> None:

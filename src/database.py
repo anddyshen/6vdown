@@ -13,12 +13,14 @@ from .models import (
     MagnetLink,
     MirrorSite,
     ParseItem,
+    SiteInstance,
     Subscription,
     SubscriptionHistory,
     TaskRecord,
     host_from_row,
     mirror_from_row,
     now_ms,
+    site_from_row,
     sub_from_row,
     task_from_row,
 )
@@ -34,17 +36,25 @@ CREATE TABLE IF NOT EXISTS mirror_sites(
   url TEXT UNIQUE, enabled INTEGER DEFAULT 1, is_current INTEGER DEFAULT 0,
   status TEXT DEFAULT '', checked_at INTEGER DEFAULT 0,
   created_at INTEGER DEFAULT 0, note TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS site_instances(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  module_id TEXT NOT NULL DEFAULT 'hao6v', name TEXT DEFAULT '',
+  entry_urls TEXT DEFAULT '[]', enabled INTEGER DEFAULT 1,
+  is_current INTEGER DEFAULT 0,
+  note TEXT DEFAULT '', created_at INTEGER);
 CREATE TABLE IF NOT EXISTS task_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at INTEGER, title TEXT, link TEXT, source TEXT,
   host_name TEXT, host_type TEXT, status TEXT, message TEXT);
 CREATE TABLE IF NOT EXISTS parse_records(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  site_url TEXT, detail_url TEXT UNIQUE, title TEXT, date TEXT,
+  site_url TEXT, detail_url TEXT, title TEXT, date TEXT,
   block TEXT, is_red INTEGER DEFAULT 0, is_classic INTEGER DEFAULT 0,
   detail_ok INTEGER DEFAULT 0,
   desc TEXT, magnets_json TEXT DEFAULT '[]', first_seen INTEGER,
-  last_seen INTEGER DEFAULT 0, prev_title TEXT DEFAULT '');
+  last_seen INTEGER DEFAULT 0, prev_title TEXT DEFAULT '',
+  site_key TEXT DEFAULT '',
+  UNIQUE(site_url, detail_url));
 CREATE TABLE IF NOT EXISTS parse_runs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_url TEXT, started_at INTEGER, finished_at INTEGER,
@@ -54,7 +64,7 @@ CREATE TABLE IF NOT EXISTS subscriptions(
   title TEXT NOT NULL, detail_url TEXT UNIQUE NOT NULL,
   status TEXT DEFAULT 'active', last_ep TEXT DEFAULT '',
   emby_series_id TEXT DEFAULT '', created_at INTEGER DEFAULT 0,
-  updated_at INTEGER DEFAULT 0);
+  updated_at INTEGER DEFAULT 0, site_key TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS subscription_history(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sub_id INTEGER NOT NULL, episode_label TEXT DEFAULT '',
@@ -62,6 +72,19 @@ CREATE TABLE IF NOT EXISTS subscription_history(
   pushed_at INTEGER DEFAULT 0, UNIQUE(sub_id, magnet_url));
 CREATE TABLE IF NOT EXISTS settings(
   key TEXT PRIMARY KEY, value TEXT);
+"""
+
+# parse_records 重建迁移用的新表 DDL（联合唯一）
+_SCHEMA_PARSE_RECORDS_NEW = """
+CREATE TABLE parse_records(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  site_url TEXT, detail_url TEXT, title TEXT, date TEXT,
+  block TEXT, is_red INTEGER DEFAULT 0, is_classic INTEGER DEFAULT 0,
+  detail_ok INTEGER DEFAULT 0,
+  desc TEXT, magnets_json TEXT DEFAULT '[]', first_seen INTEGER,
+  last_seen INTEGER DEFAULT 0, prev_title TEXT DEFAULT '',
+  site_key TEXT DEFAULT '',
+  UNIQUE(site_url, detail_url));
 """
 
 
@@ -73,24 +96,67 @@ class Database:
         with self._conn() as c:
             c.executescript(_SCHEMA)
         self._ensure_columns()
+        self._migrate_parse_records_unique()
+        self.ensure_builtin_sites()
+
+    def _migrate_parse_records_unique(self) -> None:
+        """旧库迁移：detail_url 全局唯一 → (site_url, detail_url) 联合唯一。
+
+        多入口站点（如电影港新版的多个分类页）下，同一详情页会归属不同入口，
+        全局唯一会导致 INSERT 冲突；重建表并原样拷贝数据。
+        """
+        try:
+            with self._lock, self._conn() as c:
+                row = c.execute(
+                    "SELECT sql FROM sqlite_master WHERE type=? AND name=?",
+                    ("table", "parse_records")).fetchone()
+                sql = (row["sql"] or "") if row else ""
+                compact = sql.replace(" ", "").lower()
+                if "unique(site_url,detail_url)" in compact:
+                    return
+                if not compact:
+                    return
+                c.executescript(
+                    "ALTER TABLE parse_records RENAME TO parse_records_old;"
+                    + _SCHEMA_PARSE_RECORDS_NEW +
+                    "INSERT OR IGNORE INTO parse_records(id,site_url,detail_url,"
+                    "title,date,block,is_red,is_classic,detail_ok,desc,"
+                    "magnets_json,first_seen,last_seen,prev_title,site_key) "
+                    "SELECT id,site_url,detail_url,title,date,block,is_red,"
+                    "is_classic,detail_ok,desc,magnets_json,first_seen,last_seen,"
+                    "prev_title,site_key FROM parse_records_old;"
+                    "DROP TABLE parse_records_old;")
+        except Exception:
+            # 迁移失败不阻断启动（下次打开会重试）；旧库仍可读
+            pass
 
     def _ensure_columns(self) -> None:
-        """旧库迁移：为 parse_records 补充后加的列。"""
+        """旧库迁移：为后加的列自动补齐（parse_records / subscriptions）。"""
         added = {
-            "detail_ok": "INTEGER DEFAULT 0",
-            "last_seen": "INTEGER DEFAULT 0",
-            "prev_title": "TEXT DEFAULT ''",
+            "parse_records": {
+                "detail_ok": "INTEGER DEFAULT 0",
+                "last_seen": "INTEGER DEFAULT 0",
+                "prev_title": "TEXT DEFAULT ''",
+                "site_key": "TEXT DEFAULT ''",
+            },
+            "subscriptions": {
+                "site_key": "TEXT DEFAULT ''",
+            },
+            "site_instances": {
+                "is_current": "INTEGER DEFAULT 0",
+            },
         }
         try:
             with self._lock, self._conn() as c:
-                cols = {r["name"] for r in
-                        c.execute("PRAGMA table_info(parse_records)")}
-                if not cols:
-                    return
-                for name, ddl in added.items():
-                    if name not in cols:
-                        c.execute(
-                            f"ALTER TABLE parse_records ADD COLUMN {name} {ddl}")
+                for table, cols in added.items():
+                    exist = {r["name"] for r in
+                             c.execute(f"PRAGMA table_info({table})")}
+                    if not exist:
+                        continue
+                    for name, ddl in cols.items():
+                        if name not in exist:
+                            c.execute(
+                                f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
         except Exception:
             pass
 
@@ -218,6 +284,117 @@ class Database:
                 ("ok" if ok else "fail", now_ms(), note, url),
             )
 
+    # ------------------------------------------------------------- sites
+    def ensure_default_site(self) -> int:
+        """首次运行写入默认站点实例（hao6v 模块，入口为空=共享镜像池）。"""
+        with self._lock, self._conn() as c:
+            row = c.execute(
+                "SELECT id FROM site_instances ORDER BY id ASC LIMIT 1").fetchone()
+            if row:
+                return int(row["id"])
+            cur = c.execute(
+                "INSERT INTO site_instances(module_id,name,entry_urls,enabled,"
+                "is_current,note,created_at) VALUES(?,?,?,?,?,?,?)",
+                (constants.DEFAULT_SITE_MODULE, constants.DEFAULT_SITE_NAME,
+                 "[]", 1, 1, "系统默认站点；入口为空时使用镜像管理中的域名", now_ms()),
+            )
+            return int(cur.lastrowid)
+
+    def ensure_builtin_sites(self) -> None:
+        """按已注册的内置模块补写内置站点实例（幂等；用户删过的不再补）。"""
+        self.ensure_default_site()
+        try:
+            from .site.modules.registry import list_modules
+
+            metas = {m.module_id: m for m in list_modules()}
+        except Exception:
+            return
+        have = {s.module_id for s in self.list_sites()}
+        for mid, meta in metas.items():
+            if mid == "hao6v" or mid in have:
+                continue
+            if not meta.default_entry_urls:
+                continue
+            if self.get_setting(f"site_dismissed:{mid}") == "1":
+                continue
+            self.upsert_site(SiteInstance(
+                module_id=mid, name=meta.name,
+                entry_urls=list(meta.default_entry_urls),
+                enabled=True, note="内置站点，入口可自行增删（发布页域名可在备注中查）"))
+
+    def list_sites(self, enabled_only: bool = False) -> list:
+        sql = "SELECT * FROM site_instances"
+        if enabled_only:
+            sql += " WHERE enabled=1"
+        sql += " ORDER BY id ASC"
+        with self._lock, self._conn() as c:
+            rows = c.execute(sql).fetchall()
+        return [site_from_row(r) for r in rows]
+
+    def get_site(self, site_id: int) -> Optional[SiteInstance]:
+        with self._lock, self._conn() as c:
+            r = c.execute(
+                "SELECT * FROM site_instances WHERE id=?", (site_id,)).fetchone()
+        return site_from_row(r) if r else None
+
+    def current_site(self) -> Optional[SiteInstance]:
+        """当前解析站点（is_current=1）；未设置时取第一个启用的站点。"""
+        sites = self.list_sites()
+        for s in sites:
+            if s.is_current:
+                return s
+        for s in sites:
+            if s.enabled:
+                return s
+        return sites[0] if sites else None
+
+    def set_current_site(self, site_id: int) -> None:
+        with self._lock, self._conn() as c:
+            c.execute("UPDATE site_instances SET is_current=0")
+            c.execute("UPDATE site_instances SET is_current=1 WHERE id=?",
+                      (site_id,))
+
+    def upsert_site(self, s: SiteInstance) -> int:
+        payload = json.dumps([u for u in (s.entry_urls or []) if u],
+                             ensure_ascii=False)
+        with self._lock, self._conn() as c:
+            if s.id:
+                c.execute(
+                    "UPDATE site_instances SET module_id=?,name=?,entry_urls=?,"
+                    "enabled=?,is_current=?,note=? WHERE id=?",
+                    (s.module_id, s.name, payload, int(bool(s.enabled)),
+                     int(bool(s.is_current)), s.note or "", s.id),
+                )
+                return int(s.id)
+            cur = c.execute(
+                "INSERT INTO site_instances(module_id,name,entry_urls,enabled,"
+                "is_current,note,created_at) VALUES(?,?,?,?,?,?,?)",
+                (s.module_id, s.name, payload, int(bool(s.enabled)),
+                 int(bool(s.is_current)), s.note or "", now_ms()),
+            )
+            return int(cur.lastrowid)
+
+    def delete_site(self, site_id: int) -> None:
+        site = self.get_site(site_id)
+        with self._lock, self._conn() as c:
+            c.execute("DELETE FROM site_instances WHERE id=?", (site_id,))
+        # 内置站点被用户主动删除 → 记录免打扰，重启不再自动补写
+        if site is not None:
+            try:
+                from .site.modules.registry import list_modules
+
+                builtin = {m.module_id: m for m in list_modules()}
+                meta = builtin.get(site.module_id)
+                if meta is not None and meta.default_entry_urls:
+                    self.set_setting(f"site_dismissed:{site.module_id}", "1")
+            except Exception:
+                pass
+
+    def set_site_enabled(self, site_id: int, enabled: bool) -> None:
+        with self._lock, self._conn() as c:
+            c.execute("UPDATE site_instances SET enabled=? WHERE id=?",
+                      (int(bool(enabled)), site_id))
+
     # ------------------------------------------------------------- task_log
     def add_task(self, t: TaskRecord) -> int:
         with self._lock, self._conn() as c:
@@ -278,8 +455,9 @@ class Database:
                     (site_url, it.detail_url, it.title, it.date, it.block,
                      int(it.is_red), int(it.is_classic),
                      int(bool(it.magnets or it.detail_ok)), it.desc,
-                     json.dumps([{"label": m.label, "url": m.url} for m in it.magnets],
-                                ensure_ascii=False),
+                     json.dumps([{"label": m.label, "url": m.url,
+                                  "kind": getattr(m, "kind", "magnet")}
+                                 for m in it.magnets], ensure_ascii=False),
                      it.first_seen or now_ms()),
                 )
                 new_count += 1
@@ -303,7 +481,8 @@ class Database:
                     continue
                 now = it.last_seen or now_ms()
                 mags = json.dumps(
-                    [{"label": m.label, "url": m.url} for m in it.magnets],
+                    [{"label": m.label, "url": m.url,
+                      "kind": getattr(m, "kind", "magnet")} for m in it.magnets],
                     ensure_ascii=False)
                 row = c.execute(
                     "SELECT title,date,desc,detail_ok,magnets_json "
@@ -354,8 +533,9 @@ class Database:
                 "UPDATE parse_records SET desc=?, detail_ok=?, magnets_json=? "
                 "WHERE site_url=? AND detail_url=?",
                 (it.desc or "", int(bool(it.magnets or it.detail_ok)),
-                 json.dumps([{"label": m.label, "url": m.url} for m in it.magnets],
-                            ensure_ascii=False),
+                 json.dumps([{"label": m.label, "url": m.url,
+                              "kind": getattr(m, "kind", "magnet")}
+                             for m in it.magnets], ensure_ascii=False),
                  site_url, it.detail_url),
             )
 
@@ -368,8 +548,21 @@ class Database:
             ).fetchall()
         return [self._row_to_parse_item(r) for r in rows]
 
-    def list_parse_items(self, site_url: str) -> list:
-        """读取某站全部缓存记录（第二次解析直接展示此缓存）。"""
+    def list_parse_items(self, site_url) -> list:
+        """读取缓存记录（第二次解析直接展示此缓存）。
+
+        site_url 可为单个地址或地址列表（多站点合并展示）。
+        """
+        if isinstance(site_url, (list, tuple, set)):
+            urls = [u for u in site_url if u]
+            if not urls:
+                return []
+            marks = ",".join("?" * len(urls))
+            with self._lock, self._conn() as c:
+                rows = c.execute(
+                    f"SELECT * FROM parse_records WHERE site_url IN ({marks}) "
+                    "ORDER BY id ASC", urls).fetchall()
+            return [self._row_to_parse_item(r) for r in rows]
         with self._lock, self._conn() as c:
             rows = c.execute(
                 "SELECT * FROM parse_records WHERE site_url=? "
@@ -384,7 +577,8 @@ class Database:
         try:
             data = json.loads(r["magnets_json"] or "[]")
             magnets = [MagnetLink(label=str(x.get("label", "")),
-                                  url=str(x.get("url", "")))
+                                  url=str(x.get("url", "")),
+                                  kind=str(x.get("kind", "magnet") or "magnet"))
                        for x in data if x.get("url")]
         except Exception:
             magnets = []

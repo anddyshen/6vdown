@@ -8,7 +8,7 @@
 > 首页更新列表与各详情页的磁力链接，以【电影名称 · 对应日期 · 资源简介】列出，勾选或
 > 逐条即可发送到下载器。支持增量比对、镜像容灾、多集剧集分组、历史痕迹管理与一键打包 exe。
 
-当前版本：**v0.8.0**
+当前版本：**v0.9.0**
 
 ---
 
@@ -137,7 +137,7 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 │ 右下角渐变弹窗（NotifyManager） · 剪贴板监听 · 单实例锁      │
 ├─ 核心业务层 ────────────────────────────────────────────────┤
 │ linkparse（磁力/PT/http 解析）                              │
-│ site/fetcher + site/parser + site/mirrors + site/service    │
+│ site/fetcher + site/modules（按站点解析模块） + site/service │
 │ downloader/manager + clients（qB / Transmission / Aria2）   │
 ├─ 数据层 ────────────────────────────────────────────────────┤
 │ SQLite（6vdown.db） · config.json · cache/ · 日志          │
@@ -153,9 +153,11 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 | `src/controller.py` | 编排：托盘（含下载服务器快捷切换）、剪贴板/拖拽、发送、解析任务、通知、启动状态 |
 | `src/database.py` | SQLite：主机、镜像、解析缓存、历史、运行记录 |
 | `src/site/fetcher.py` | 抓取与解码（GBK/UTF-8 自适应） |
-| `src/site/parser.py` | 首页区块/日期/星标规则与详情页磁力提取 |
+| `src/site/parser.py` | 首页区块/日期/星标规则与详情页磁力提取（hao6v 模板） |
+| `src/site/modules/` | 站点解析模块：`base`（接口/Schema/翻页）、`hao6v`/`dygang`/`dyg7`/`lou1`（内置）、`generic`（规则 JSON 引擎）、`analyzer`（AutoProfile 本地规则推导）、`health`（模块健康度自检）、`rules/`（内置参考规则）、`rule_store`（data/modules 用户规则）、`registry`（注册表，用户规则覆盖内置） |
+| `src/site/ai_client.py` | AI 助手客户端（OpenAI 兼容 / 本机 Ollama），仅用于生成新站点解析规则；Key 经 DPAPI 加密，结果须过本地校验 |
 | `src/site/mirrors.py` | 镜像可用性探测与发布页发现 |
-| `src/site/service.py` | 镜像容灾→解析→增量→补抓→落库（可复用/可测试） |
+| `src/site/service.py` | 站点实例→模块解析→镜像容灾→增量→补抓→落库（可复用/可测试） |
 | `src/pinyin_search.py` | 关键词 / 拼音首字母检索（依赖 pypinyin，缺失自动降级） |
 | `src/downloader/` | qB/TR/Aria2 三客户端与统一发送管理 |
 | `src/ui/` | 各界面页、拖拽窗、托盘、渐变弹窗、主题、后台任务封装 |
@@ -165,7 +167,7 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 
 | 文件 | 说明 |
 |---|---|
-| `data\6vdown.db` | `download_hosts` / `mirror_sites` / `parse_records` / `parse_runs` / `task_log` / `settings` |
+| `data\6vdown.db` | `download_hosts` / `mirror_sites` / `site_instances` / `parse_records` / `parse_runs` / `task_log` / `subscriptions` / `settings` |
 | `data\config.json` | 应用配置（主题、默认解析操作、启动行为、区块勾选、通知等） |
 | `data\cache\` | 首页/详情页抓取副本，用于排查解析问题 |
 | `data\6vdown.log` | 运行日志 |
@@ -191,6 +193,20 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 ---
 
 ## 版本变更记录
+- **v0.9.0（多站点解析模块化 · 通用规则引擎 · AI 助手）**：
+  - **解析模块化**：新增 `src/site/modules/`（接口 + 注册表 + 内置模块），`SiteParseService` 按“站点实例”选用模块；`hao6v`（6v520 模板）行为不变。
+  - **多站点同时解析**：解析工作台顶部“🗺 解析站点”按钮可多选本次要抓取的站点（选择写入配置 `enabled_sites`）；一次解析可覆盖多个站点，结果合并展示、增量/补抓/落库按站点独立进行；单个站点失效不影响其它站点。
+  - **画质优先级可调**：设置页“下载画质优先级”改为可拖动排序的列表（默认 1080P ➔ 4K ➔ 720P ➔ 其它，可一键恢复默认），订阅追剧按该顺序选取单条最优磁力。
+  - **电影港 dygang.tv 接入**：新增 `dygang` 模块（EmpireCMS 老模板 table 行 + 日期锚点 + tab 容器归区块 + alt 补全被截断标题）。
+  - **电影港新版 dyg7.com 接入**：新增 `dyg7` 模块（8 个分类列表页入口、`index_N.html` 翻页、入口→区块映射：国剧/日韩剧/美剧/更新电视剧/短剧/动画/综艺/最新电影；“更新至N集”等状态并入标题以识别剧集更新）；新增“短剧/综艺”两个解析区块。
+  - **BT之家 1lou.me 接入**：新增 `lou1` 模块（8 个资源版块页入口、`li.media thread` 列表、双模板去重、置顶公告跳过）；帖子详情提取三类资源：磁力、`.torrent` 附件（实测游客可直接下载，推给 qB/TR 即可添加）、网盘链接（仅展示+复制）；资源类型新增 `kind` 字段（magnet/torrent/pan），订阅追剧只挑选可发送类型。
+  - **解析性能优化**：① 详情页“运行内缓存”——同一次解析中相同详情页只抓一次（论坛多版块内容重复时收益最大，实测 1lou 五版块 401 次抓取降为约 200 次唯一帖子）；② 详情页并发抓取可配置（设置页 1-8，默认 2，请求间隔仍受“礼貌间隔”约束）；③ 控制台输出每站详情抓取耗时，失败条目下次解析自动补抓。
+  - **通用规则引擎（新站点零代码接入）**：新增 `generic.py` 规则引擎（`rows`/`date_anchor` 两种提取模式 + 详情三类资源提取 + 翻页）+ `rules/*.json` 四个内置站点的等价参考规则 + `rule_store.py`（`data/modules/*.json` 用户规则存储/校验/热加载，**同 ID 覆盖内置模块**——站点改版可先改规则应急）。规则回归测试证明：四个站点的规则 JSON 经通用引擎解析，与内置模块输出逐字段一致（含线上实测）。
+  - **AutoProfile 本地规则推导（零依赖、无需 AI）**：新增 `analyzer.py`——输入站点 URL 自动探测详情链接模式、行容器、标题来源、日期作用域、状态标记与区块来源 → 生成规则 JSON → 用通用引擎试解析 → 抓 1-3 个详情页验证资源提取率 → 产出置信度报告与告警。线上实测：电影港 `date_anchor` 模式 48 条、电影港新版 `rows` 模式 30 条，详情资源验证 2/2 命中。
+  - **AI 助手（可配置，可选）**：新增 `ai_client.py`（OpenAI 兼容协议，支持外部 API 如 DeepSeek 与本机 Ollama/LM Studio）+ 设置页「🤖 AI 助手」（开关/提供商/地址/模型/Key，带测试连接）。用途 = 给新站点生成解析规则：页面样本去噪截断后发送，返回严格 JSON，**必须经本地双重把关**（结构校验 + 实测解析 ≥3 条）才可采用，否则自动降级本地推导；API Key 走 DPAPI 加密存本机。
+  - **新模块向导与模块健康度**：新增 `ui/analyze_dialog.py`（输入 URL → 本地/AI 推导 → 规则 JSON 可编辑 → 试解析预览前 12 条 → 保存即创建解析站点）；新增 `modules/health.py` 记录每模块最近条目数与资源命中率，连续 0 条/命中率过低在设置页「🧩 自定义模块与健康度」黄字提示“可能已改版”，可一键重新分析。
+  - **多站点数据模型**：`site_instances` 表（模块、入口、启用、当前站点）、`parse_records/subscriptions` 增加 `site_key` 列；旧库打开自动迁移。
+  - **解码增强**：页面“声明 gb2312 实际输出 UTF-8”的 CDN 节点现在能正确解码（干净的 UTF-8 优先）。
 - **v0.8.0（影视订阅与自动追剧重大升级）**：
   - **追剧订阅管理**：新增「📺 我的订阅」独立工作台面板；解析工作台与磁力详情框均支持「订阅此剧」一键纳入追剧更新池。
   - **启动与定时自动巡检**：启动程序（延迟15秒防冷启动）及后台定时循环自动检查订阅剧集最新更新。

@@ -1,19 +1,23 @@
-"""站点解析服务：镜像容灾 → 首页解析 → 增量比对 → 详情磁力抓取 → 落库。
+"""站点解析服务：站点实例 → 模块解析 → 镜像容灾 → 增量 → 详情磁力抓取 → 落库。
 
 纯线程安全（不依赖 Qt），供 GUI 后台线程或 CLI 复用。
+每个站点一个解析模块（src/site/modules/），本服务只负责编排：
+  入口解析（resolve_site）→ 列表解析（module.parse_list）→ 增量比对
+  → 详情抓取（module.parse_detail）→ 落库。
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import Callable, Optional
 
 from .. import constants
 from ..database import Database
 from ..log import get_logger
-from ..models import MirrorSite, ParseItem
+from ..models import MirrorSite, ParseItem, SiteInstance
 from . import mirrors as mirror_mod
 from .fetcher import SiteFetcher
-from .parser import HomeParser, parse_detail_desc, parse_detail_magnets
+from .modules import get_module
 
 log = get_logger("site.service")
 
@@ -22,6 +26,9 @@ class SiteParseService:
     def __init__(self, db: Database, fetcher: SiteFetcher | None = None):
         self.db = db
         self.fetcher = fetcher or SiteFetcher()
+        self._instance: Optional[SiteInstance] = None  # 本次解析使用的站点实例
+        # 运行内详情缓存：detail_url -> (magnets, desc)，跨入口/版块去重抓取
+        self._detail_cache: dict = {}
 
     # ------------------------------------------------------------- 镜像容灾
     def ensure_mirrors(self) -> None:
@@ -39,30 +46,75 @@ class SiteParseService:
                 self.db.set_current_mirror(u)
                 first = False
 
-    def resolve_site(self) -> tuple:
-        """按优先级（当前 → 其它启用镜像）返回第一个可用的 (url, html)。
-        全部失败返回 (None, None)。过程中更新镜像状态。"""
-        self.ensure_mirrors()
-        order = []
-        for m in self.db.list_mirrors():
-            if not m.enabled:
-                continue
-            order.append(m)
-        # 当前置顶
+    def _entry_targets(self, inst: SiteInstance) -> list:
+        """入口目标列表 [(url, MirrorSite|None)]。
+
+        - 实例自带入口（分类页/版块页站点）：逐项尝试，不走镜像池；
+        - 入口为空（hao6v 家族）：共享镜像池，当前 → 其它启用镜像。
+        """
+        entries = inst.entries()
+        if entries:
+            return [(u, None) for u in entries]
+        order = [m for m in self.db.list_mirrors() if m.enabled]
         order.sort(key=lambda m: (0 if m.is_current else 1, m.id))
-        for m in order:
+        return [(m.url, m) for m in order]
+
+    def resolve_site(self) -> tuple:
+        """兼容入口：返回第一个可用入口的 (url, html)（多站点时取第一个可解析的）。"""
+        for inst in self._pick_instances(None):
+            site, html = self._resolve_site(inst)
+            if site:
+                return site, html
+        return None, None
+
+    def _pick_instances(self, sites) -> list:
+        """按工作台勾选（站点 id 列表）取站点实例；空选择 = 全部启用站点。"""
+        enabled = self.db.list_sites(enabled_only=True)
+        if not enabled:
+            return []
+        ids = []
+        for x in (sites or []):
             try:
-                html, final = self.fetcher.get(m.url, timeout=14, cache=True)
+                ids.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        if not ids:
+            cur = self.db.current_site()
+            if cur is not None and cur.enabled:
+                enabled.sort(key=lambda s: (0 if s.id == cur.id else 1, s.id))
+            return enabled
+        by_id = {s.id: s for s in enabled}
+        picked, seen = [], set()
+        for i in ids:  # 保持用户勾选顺序
+            if i in by_id and i not in seen:
+                seen.add(i)
+                picked.append(by_id[i])
+        return picked
+
+    def _resolve_site(self, inst: SiteInstance) -> tuple:
+        """解析单个站点实例的入口 → (url, html)；失败 (None, None)。"""
+        module = get_module(inst.module_id)
+        if module is None:
+            log.warning("站点 %s 绑定的模块 %s 不存在，已跳过",
+                        inst.name, inst.module_id)
+            return None, None
+        for url, mirror in self._entry_targets(inst):
+            try:
+                html, final = self.fetcher.get(url, timeout=14, cache=True)
                 if len(html) < 3000:
-                    self.db.mark_mirror(m.url, False, "内容过短")
+                    if mirror:
+                        self.db.mark_mirror(url, False, "内容过短")
                     continue
-                self.db.mark_mirror(m.url, True, "可用")
-                if not m.is_current:
-                    self.db.set_current_mirror(m.url)
-                return m.url, html
+                if mirror:
+                    self.db.mark_mirror(url, True, "可用")
+                    if not mirror.is_current:
+                        self.db.set_current_mirror(url)
+                self._instance = inst
+                return url, html
             except Exception as e:
-                self.db.mark_mirror(m.url, False, f"{type(e).__name__}")
-                log.info("镜像 %s 不可用: %s", m.url, e)
+                if mirror:
+                    self.db.mark_mirror(url, False, f"{type(e).__name__}")
+                log.info("入口 %s 不可用: %s", url, e)
         return None, None
 
     # ------------------------------------------------------------- 解析入口
@@ -73,8 +125,15 @@ class SiteParseService:
             polite_delay: float = 0.3,
             log_cb: Optional[Callable[[str], None]] = None,
             progress_cb: Optional[Callable[[int, int], None]] = None,
-            cancel: Optional[Callable[[], bool]] = None) -> dict:
-        """执行一次完整解析。返回统计 summary。"""
+            cancel: Optional[Callable[[], bool]] = None,
+            sites: Optional[list] = None,
+            concurrency: int = 1) -> dict:
+        """执行一次完整解析（可多站点）。返回统计 summary。
+
+        sites = 工作台勾选的站点 id 列表；为空/None = 全部启用站点。
+        concurrency = 详情页并发抓取数（1=串行最礼貌）。
+        summary["sites"] 为各站点分解结果；items 为合并后的缓存列表。
+        """
         def emit(msg: str) -> None:
             if log_cb:
                 try:
@@ -82,38 +141,321 @@ class SiteParseService:
                 except Exception:
                     pass
 
+        self._detail_cache = {}  # 每次解析清空：保证增量更新拿到新数据
         summary = {"ok": False, "site": "", "total": 0, "new": 0,
                    "updated": 0, "failed": 0, "error": "",
-                   "new_urls": [], "updated_urls": []}
+                   "new_urls": [], "updated_urls": [], "sites": []}
         enabled = set(enabled_blocks) if enabled_blocks else set(
             constants.DEFAULT_ENABLED_BLOCKS)
 
         emit("== 开始解析（后台任务）==")
-        site, html = self.resolve_site()
-        if not site:
-            summary["error"] = "所有备用镜像均不可用，请稍后重试或在设置中检查域名。"
+        self.ensure_mirrors()
+        self.db.ensure_default_site()
+        instances = self._pick_instances(sites)
+        if not instances:
+            summary["error"] = ("没有可解析的站点：请在工作台勾选站点，"
+                                "或在设置页启用/添加站点。")
             emit("[错误] " + summary["error"])
             return summary
-        summary["site"] = site
-        emit(f"[域名] 使用 {site}")
+        emit(f"[站点] 本次解析 {len(instances)} 个："
+             + "、".join(i.name for i in instances))
 
-        # 首页解析
-        parser = HomeParser(html, site)
-        items: list = parser.parse(include_unknown=include_unknown)
+        merged: list = []
+        seen_urls: set = set()
+        for inst in instances:
+            if cancel and cancel():
+                emit("[停止] 任务被用户取消")
+                break
+            res = self._run_one(inst, enabled, fetch_detail, include_unknown,
+                                polite_delay, emit, cancel, concurrency)
+            self._mark_health(inst.module_id, res)
+            summary["sites"].append(res)
+            summary["total"] += res["total"]
+            summary["new"] += res["new"]
+            summary["updated"] += res["updated"]
+            summary["failed"] += res["failed"]
+            summary["new_urls"] += res["new_urls"]
+            summary["updated_urls"] += res["updated_urls"]
+            for it in res["items"]:
+                if it.detail_url and it.detail_url not in seen_urls:
+                    seen_urls.add(it.detail_url)
+                    merged.append(it)
+            if res.get("error"):
+                summary["error"] = ((summary["error"] + "；")
+                                    if summary["error"] else "") + \
+                    f"{inst.name}: {res['error']}"
+
+        ok_sites = [r for r in summary["sites"] if r.get("ok")]
+        summary["ok"] = bool(ok_sites)
+        summary["site"] = "、".join(r["name"] for r in summary["sites"])
+        summary["items"] = merged
+        summary["all_items"] = merged
+        emit(f"[完成] {len(ok_sites)}/{len(summary['sites'])} 个站点解析成功，"
+             f"新增 {summary['new']} 条，更新 {summary['updated']} 条，"
+             f"合并缓存 {len(merged)} 条")
+        return summary
+
+    # ------------------------------------------------------------ 健康度
+    def _mark_health(self, module_id: str, res: dict) -> None:
+        """记录站点模块本次解析健康度（连续异常 → 设置页提示可能改版）。"""
+        try:
+            from .modules.health import mark as health_mark
+
+            total = int(res.get("detail_total") or 0)
+            ratio = None
+            if total:
+                ratio = max(0.0, (total - int(res.get("failed") or 0)) / total)
+            health_mark(self.db, module_id, int(res.get("total") or 0), ratio)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------ 详情抓取
+    def _fetch_details(self, fetch_list: list, module, site: str,
+                       refresh_map: dict, polite_delay: float, emit, cancel,
+                       concurrency: int = 1) -> int:
+        """抓取详情页列表。
+
+        - 运行内缓存：同一 detail_url 只抓一次（跨版块/入口的内容重复直接复用）；
+        - 并发：concurrency>1 时用线程池并行抓取（请求间隔仍受 polite_delay 限制）。
+        返回失败数量（含无磁力的条目）。
+        """
+        total = len(fetch_list)
+        state = {"done": 0, "failed": 0}
+        lock = threading.Lock()
+
+        def _log_ok(it) -> None:
+            emit(f"[{state['done']}/{total}] √ "
+                 + ("· 更新 " if it.is_update else "")
+                 + f"{it.title[:34]}"
+                 + (f" 磁力×{len(it.magnets)}" if it.magnets else " (无磁力)"))
+            if not it.magnets:
+                state["failed"] += 1
+
+        def _reuse(it) -> bool:
+            cached = self._detail_cache.get(it.detail_url)
+            if cached is None:
+                return False
+            mags, desc = cached
+            it.magnets = list(mags)
+            if desc and not it.desc:
+                it.desc = desc
+            it.detail_ok = True
+            with lock:
+                state["done"] += 1
+            emit(f"[{state['done']}/{total}] ↷ {it.title[:34]}"
+                 f"（跨入口复用，磁力×{len(it.magnets)}）")
+            return True
+
+        def _persist(it) -> None:
+            if it.detail_url in refresh_map:
+                try:
+                    self.db.update_parse_item(site, it)
+                except Exception:
+                    pass
+
+        def _work(it) -> None:
+            html, _ = self.fetcher.get(it.detail_url, timeout=14)
+            module.parse_detail(html, it)
+            it.detail_ok = True
+
+        pending = []
+        for it in fetch_list:
+            if cancel and cancel():
+                emit("[停止] 任务被用户取消")
+                break
+            if _reuse(it):
+                _persist(it)
+                continue
+            pending.append(it)
+
+        if not pending:
+            return state["failed"]
+
+        def _run_serial() -> None:
+            for n, it in enumerate(pending, 1):
+                if cancel and cancel():
+                    emit("[停止] 任务被用户取消")
+                    break
+                try:
+                    _work(it)
+                    self._detail_cache[it.detail_url] = (list(it.magnets),
+                                                         it.desc)
+                    with lock:
+                        state["done"] += 1
+                    _log_ok(it)
+                except Exception as e:
+                    it.error = f"{type(e).__name__}: {e}"
+                    with lock:
+                        state["done"] += 1
+                        state["failed"] += 1
+                    emit(f"[{state['done']}/{total}] × {it.title[:34]}"
+                         f" -> {it.error}")
+                _persist(it)
+                if polite_delay > 0:
+                    time.sleep(min(polite_delay, 1.5))
+
+        def _run_concurrent(workers: int) -> None:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = {}
+                for it in pending:
+                    if cancel and cancel():
+                        emit("[停止] 任务被用户取消")
+                        break
+                    futs[pool.submit(_work, it)] = it
+                    if polite_delay > 0:
+                        time.sleep(min(polite_delay, 1.5))
+                for fut in as_completed(futs):
+                    it = futs[fut]
+                    try:
+                        fut.result()
+                        self._detail_cache[it.detail_url] = (
+                            list(it.magnets), it.desc)
+                        with lock:
+                            state["done"] += 1
+                        _log_ok(it)
+                    except Exception as e:
+                        it.error = f"{type(e).__name__}: {e}"
+                        with lock:
+                            state["done"] += 1
+                            state["failed"] += 1
+                        emit(f"[{state['done']}/{total}] × {it.title[:34]}"
+                             f" -> {it.error}")
+                    _persist(it)
+
+        workers = max(1, int(concurrency or 1))
+        if workers > 1 and len(pending) > 1:
+            _run_concurrent(workers)
+        else:
+            _run_serial()
+        return state["failed"]
+
+    # ------------------------------------------------------------ 单站点
+    def _run_one(self, inst: SiteInstance, enabled: set, fetch_detail: bool,
+                 include_unknown: bool, polite_delay: float, emit, cancel,
+                 concurrency: int = 1) -> dict:
+        """解析单个站点实例。
+
+        - 入口模式（entry_urls 非空）：逐入口抓取解析，互不影响；
+        - 镜像池模式（entry_urls 为空）：按 当前→其它 容灾取第一个可用入口。
+        """
+        res = {"site": "", "name": inst.name, "module": inst.module_id,
+               "total": 0, "new": 0, "updated": 0, "failed": 0,
+               "new_urls": [], "updated_urls": [], "items": [],
+               "ok": False, "error": "", "entries": []}
+        targets = self._entry_targets(inst)
+        if not targets:
+            res["error"] = "入口不可用"
+            emit(f"[跳过] {inst.name}：没有可用入口")
+            return res
+        module = get_module(inst.module_id)
+        if module is None:
+            res["error"] = f"模块 {inst.module_id} 不存在"
+            emit(f"[错误] {inst.name}：{res['error']}")
+            return res
+
+        if inst.entries():
+            # 入口模式：逐入口解析（单入口失败不影响其它入口）
+            for url, _mirror in targets:
+                if cancel and cancel():
+                    emit("[停止] 任务被用户取消")
+                    break
+                html = self._fetch_entry(url, None)
+                if html is None:
+                    emit(f"[跳过] {inst.name} 入口 {url} 抓取失败")
+                    res["entries"].append({"site": url, "ok": False,
+                                           "error": "抓取失败"})
+                    continue
+                sub = self._run_entry(inst, module, url, html, enabled,
+                                      fetch_detail, include_unknown,
+                                      polite_delay, emit, cancel, concurrency)
+                res["entries"].append(sub)
+                self._merge_entry(res, sub)
+            if res["entries"]:
+                res["ok"] = any(e.get("ok") for e in res["entries"])
+                if not res["ok"]:
+                    res["error"] = "全部入口解析失败"
+                ok_sites = [e["site"] for e in res["entries"] if e.get("ok")]
+                res["site"] = (ok_sites[0] if ok_sites
+                               else res["entries"][0].get("site", ""))
+        else:
+            # 镜像池模式：容灾取第一个可用入口
+            for url, mirror in targets:
+                html = self._fetch_entry(url, mirror)
+                if html is not None:
+                    sub = self._run_entry(inst, module, url, html, enabled,
+                                          fetch_detail, include_unknown,
+                                          polite_delay, emit, cancel,
+                                          concurrency)
+                    res["entries"].append(sub)
+                    self._merge_entry(res, sub)
+                    res["ok"] = sub.get("ok", False)
+                    res["site"] = url
+                    break
+            else:
+                res["error"] = "入口不可用"
+                emit(f"[跳过] {inst.name}：所有入口均不可用")
+        return res
+
+    @staticmethod
+    def _merge_entry(res: dict, sub: dict) -> None:
+        res["total"] += sub.get("total", 0)
+        res["new"] += sub.get("new", 0)
+        res["updated"] += sub.get("updated", 0)
+        res["failed"] += sub.get("failed", 0)
+        res["new_urls"] += sub.get("new_urls", [])
+        res["updated_urls"] += sub.get("updated_urls", [])
+        res["items"] += sub.get("items", [])
+
+    def _fetch_entry(self, url: str, mirror) -> Optional[str]:
+        """抓取入口页；长度不足或异常返回 None（镜像池入口会更新状态）。"""
+        try:
+            html, _final = self.fetcher.get(url, timeout=14, cache=True)
+            if len(html) < 3000:
+                if mirror:
+                    self.db.mark_mirror(url, False, "内容过短")
+                return None
+            if mirror:
+                self.db.mark_mirror(url, True, "可用")
+                if not mirror.is_current:
+                    self.db.set_current_mirror(url)
+            return html
+        except Exception as e:
+            if mirror:
+                self.db.mark_mirror(url, False, f"{type(e).__name__}")
+            log.info("入口 %s 不可用: %s", url, e)
+            return None
+
+    def _run_entry(self, inst: SiteInstance, module, site: str, html: str,
+                   enabled: set, fetch_detail: bool, include_unknown: bool,
+                   polite_delay: float, emit, cancel,
+                   concurrency: int = 1) -> dict:
+        """解析单个入口：列表（可翻页）→ 增量 → 详情 → 落库 → 读缓存。"""
+        res = {"site": site, "name": inst.name, "module": inst.module_id,
+               "total": 0, "new": 0, "updated": 0, "failed": 0,
+               "new_urls": [], "updated_urls": [], "items": [],
+               "ok": False, "error": ""}
+        self._instance = inst
+        emit(f"[站点] {inst.name} → {site}（模块 {inst.module_id}）")
+
+        items: list = module.parse_list_pages(
+            html, site, entry_url=site, fetcher=self.fetcher,
+            max_pages=getattr(module, "max_list_pages", 1),
+            include_unknown=include_unknown)
         # 按设置过滤已勾选的区块（未识别区块归入“其他”并保留）
         if enabled:
             items = [it for it in items
                      if it.block in enabled or it.block == "其他"]
-        summary["total"] = len(items)
-        emit(f"[首页] 命中区块更新 {len(items)} 条（勾选区块 {len(enabled)} 个）")
+        res["total"] = len(items)
+        emit(f"[列表] 命中区块更新 {len(items)} 条（勾选区块 {len(enabled)} 个）")
         if not items:
-            summary["ok"] = True
+            res["ok"] = True
             cached = self.db.list_parse_items(site)
-            summary["items"] = cached
-            summary["all_items"] = cached
-            emit("[完成] 首页未解析到更新记录（网站结构或区块变化？）"
+            res["items"] = cached
+            emit(f"[完成] 未解析到更新记录（网站结构或区块变化？）"
                  + (f"，仍展示缓存 {len(cached)} 条" if cached else ""))
-            return summary
+            return res
 
         # 增量比对：新增（URL 不在库）+ 更新（同一详情页标题/日期前进）
         # 连续剧/动画“更新到第 N 集/全集”时详情页 URL 不变，必须靠标题比对识别。
@@ -129,8 +471,8 @@ class SiteParseService:
                 it.is_update = True
                 it.prev_title = old.title or ""
                 updated_items.append(it)
-        summary["new"] = len(new_items)
-        summary["updated"] = len(updated_items)
+        res["new"] = len(new_items)
+        res["updated"] = len(updated_items)
         emit(f"[增量] 新增 {len(new_items)} 条，更新 {len(updated_items)} 条"
              + ("（首次解析为全量）" if not known else ""))
 
@@ -146,58 +488,36 @@ class SiteParseService:
         fetch_list = list(new_detail) + list(upd_detail) + [
             it for it in refresh_items if it.detail_url not in already]
 
+        res["detail_total"] = len(fetch_list) if (fetch_detail and fetch_list) else 0
         if fetch_detail and fetch_list:
             run_id = self.db.start_run(site)
             emit(f"[详情] 计划抓取 {len(fetch_list)} 个"
                  f"（新增 {len(new_detail)}，更新 {len(upd_detail)}，"
                  f"补抓 {len(refresh_items)}）")
-            failed = 0
-            for n, it in enumerate(fetch_list, 1):
-                if cancel and cancel():
-                    emit("[停止] 任务被用户取消")
-                    break
-                try:
-                    detail_html, _ = self.fetcher.get(it.detail_url, timeout=14)
-                    it.magnets = parse_detail_magnets(detail_html)
-                    it.desc = parse_detail_desc(detail_html)
-                    it.detail_ok = True
-                    emit(f"[{n}/{len(fetch_list)}] √ "
-                         + ("· 更新 " if it.is_update else "")
-                         + f"{it.title[:34]}" +
-                         (f" 磁力×{len(it.magnets)}" if it.magnets else " (无磁力)"))
-                    if not it.magnets:
-                        failed += 1
-                except Exception as e:
-                    it.error = f"{type(e).__name__}: {e}"
-                    failed += 1
-                    emit(f"[{n}/{len(fetch_list)}] × {it.title[:34]} -> {it.error}")
-                # 历史补抓项即时更新到缓存
-                if it.detail_url in refresh_map:
-                    try:
-                        self.db.update_parse_item(site, it)
-                    except Exception:
-                        pass
-                if polite_delay > 0:
-                    time.sleep(min(polite_delay, 1.5))
+            t0 = time.time()
+            failed = self._fetch_details(
+                fetch_list, module, site, refresh_map, polite_delay,
+                emit, cancel, concurrency)
+            emit(f"[详情] 抓取完成，耗时 {time.time() - t0:.1f}s"
+                 f"（失败 {failed} 个，下次解析自动补抓）")
 
         # 落库：新增 + 更新（含本次失败项，detail_ok=0 便于下次补抓）
         saved, changed = self.db.upsert_parse_records(
             site, list(new_detail) + list(upd_detail))
-        summary["new_urls"] = [it.detail_url for it in new_detail
+        res["new_urls"] = [it.detail_url for it in new_detail
+                           if it.detail_url]
+        res["updated_urls"] = [it.detail_url for it in upd_detail
                                if it.detail_url]
-        summary["updated_urls"] = [it.detail_url for it in upd_detail
-                                   if it.detail_url]
-        summary["new"] = saved
-        summary["updated"] = changed
+        res["new"] = saved
+        res["updated"] = changed
+        res["failed"] = failed if (fetch_detail and fetch_list) else 0
         if fetch_detail and fetch_list:
             self.db.finish_run(run_id, len(items), saved + changed, failed == 0)
-            summary["failed"] = failed
 
         # 展示/缓存：整站全部记录（第二次起与首次同样完整）
         cached = self.db.list_parse_items(site)
-        summary["ok"] = True
-        summary["items"] = cached
-        summary["all_items"] = cached
+        res["ok"] = True
+        res["items"] = cached
         emit(f"[完成] 新增入库 {saved} 条，更新 {changed} 条，"
              f"缓存共 {len(cached)} 条（可直接查看/下载）")
-        return summary
+        return res

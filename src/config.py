@@ -18,8 +18,10 @@ DEFAULTS = {
     "parse_enabled": False,       # 定时自动解析（预留）
     "parse_interval_min": 30,     # 预留
     "enabled_blocks": list(BLOCK_KEYWORDS.keys()),
+    "enabled_sites": [],              # 工作台勾选的站点 id 列表；空 = 全部启用站点
     "fetch_detail": True,         # 是否抓取详情页磁力
     "polite_delay": 0.3,          # 详情页请求间隔
+    "detail_concurrency": 2,      # 详情页并发抓取数（1=串行最礼貌；慢站点可调高）
     "drop_win_on_top": True,      # 拖拽小窗置顶
     "parse_default": "ask",
     "start_behavior": "window",
@@ -35,6 +37,13 @@ DEFAULTS = {
     "emby_enabled": False,
     "emby_server_url": "",                   # http://192.168.1.x:8096
     "emby_api_key": "",
+    # AI 助手（仅用于“新站点解析规则生成”，可完全关闭）
+    "ai_enabled": False,           # 总开关
+    "ai_provider": "external",     # external=外部 OpenAI 兼容服务 | local=本机 Ollama/LM Studio
+    "ai_base_url": "",             # 如 https://api.deepseek.com/v1
+    "ai_model": "",                # 如 deepseek-chat / qwen2.5:7b
+    "ai_api_key_enc": "",          # DPAPI 加密存储（明文不落盘）
+    "ai_timeout": 90,              # 单次生成超时（秒）
 }
 
 

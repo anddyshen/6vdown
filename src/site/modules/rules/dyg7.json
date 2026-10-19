@@ -1,0 +1,50 @@
+{
+  "module_id": "dyg7",
+  "name": "电影港新版（dyg7.com）· 规则版",
+  "desc": "EmpireCMS 新模板分类列表页；li.p1 m1 行 + title 属性标题 + 状态标记（并入标题用于更新判定）；入口路径归区块；index_N.html 翻页。等价于内置 dyg7 模块。",
+  "encoding": "utf-8",
+  "entry_mode": "entries",
+  "entry_urls": [
+    "https://www.dyg7.com/dy/",
+    "https://www.dyg7.com/dsj/dlj/",
+    "https://www.dyg7.com/dsj/rhj/",
+    "https://www.dyg7.com/dsj/omj/",
+    "https://www.dyg7.com/dsj/",
+    "https://www.dyg7.com/duanju/",
+    "https://www.dyg7.com/dongman/",
+    "https://www.dyg7.com/zyjm/"
+  ],
+  "max_pages": 2,
+  "page_template": "{entry}index_{page}.html",
+  "extract": {
+    "mode": "rows",
+    "row_re": "<li class=\"p1 m1\">.*?</li>",
+    "link_re": "<a[^>]*href=\"([^\"]+\\.html)\"",
+    "title_re": "title=\"([^\"]*)\"",
+    "status_re": "<p class=\"other\">\\s*<i>([^<]+)</i>",
+    "date_re": "",
+    "block_re": "",
+    "block_map": {
+      "/dy/": "最新电影",
+      "/dsj/dlj/": "国剧",
+      "/dsj/rhj/": "日韩剧",
+      "/dsj/omj/": "美剧",
+      "/dsj/": "更新电视剧",
+      "/duanju/": "短剧",
+      "/dongman/": "动画",
+      "/zyjm/": "综艺"
+    },
+    "skip_row_re": "",
+    "min_title_len": 2,
+    "title_qual_re": "",
+    "title_status_join": true,
+    "alt_complete": false,
+    "lookback": 900
+  },
+  "detail": {
+    "magnet_re": "magnet:\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
+    "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com", "pan.baidu.com", "drive.uc.cn", "cloud.189.cn", "xunlei.com", "115.com", "weiyun.com"],
+    "attach_res": ["attach-download", "/download/", "download.php"],
+    "desc_mode": "meta"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "module_id": "hao6v",
+  "name": "6v电影（hao6v / 6v520 模板）· 规则版",
+  "desc": "首页 tab 标签页 + li 更新行 + [MM-DD] 日期；tab 按钮/标题归区块；详情页磁力与 meta 简介。等价于内置 hao6v 模块，可作新站点模板。",
+  "encoding": "gb18030",
+  "entry_mode": "mirror",
+  "entry_urls": [],
+  "max_pages": 1,
+  "page_template": "",
+  "extract": {
+    "mode": "rows",
+    "row_re": "<li[^>]*>.*?</li>",
+    "link_re": "<a[^>]*href=\"([^\"]+\\.html)\"",
+    "title_re": "",
+    "status_re": "",
+    "date_re": "(\\d{4})-(\\d{1,2})-(\\d{1,2})|\\[(\\d{1,2})-(\\d{1,2})\\]",
+    "block_re": "<li[^>]*id=\"tab(\\d+)_btn_(\\d+)\"[^>]*>(.*?)</li>|<h([1-4])[^>]*>(.*?)</h\\4>",
+    "block_map": {},
+    "skip_row_re": "",
+    "skip_titles": ["更多", "下一页", "上一页", "尾页", "首页", "返回", "网站地图", "RSS", "收藏本站", "加入收藏", "全选", "登录", "注册", "迅雷", "发帖", "回复", "查看", "版权", "免责", "榜单", "排行榜", "教程", "帮助", "论坛", "联系我们", "公告", "专题", "留言板"],
+    "min_title_len": 5,
+    "title_qual_re": "(\\d{4}|《|》|1080|720p|4K|BD|HD|WEB|全集|更新至|第\\s*\\d+\\s*集|剧场版|加长版|导演剪辑|中英|国语|粤语|国英|双语|中字|字幕)",
+    "title_status_join": true,
+    "alt_complete": false,
+    "lookback": 900
+  },
+  "detail": {
+    "magnet_re": "magnet:\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
+    "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com", "pan.baidu.com", "drive.uc.cn", "cloud.189.cn", "xunlei.com", "115.com", "weiyun.com"],
+    "attach_res": ["attach-download", "/download/", "download.php"],
+    "desc_mode": "meta"
+  }
+}

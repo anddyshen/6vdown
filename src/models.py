@@ -1,6 +1,7 @@
 """数据模型（dataclass）。"""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -54,10 +55,57 @@ class MirrorSite:
 
 @dataclass
 class MagnetLink:
-    """单个磁力/资源地址，label 用于展示与分集。"""
+    """单个磁力/资源地址，label 用于展示与分集。
+
+    kind: magnet（磁力，可发送）/ torrent（.torrent 附件直链，可发送）
+          / pan（网盘或非种子附件，仅展示+复制，不可发送）。
+    """
 
     label: str = ""
     url: str = ""
+    kind: str = "magnet"
+
+    def sendable(self) -> bool:
+        return self.kind in ("magnet", "torrent")
+
+
+@dataclass
+class SiteInstance:
+    """站点实例：一个可独立解析的站点（绑定解析模块与入口地址）。
+
+    - entry_urls 为空 → 使用共享镜像池（mirror_sites，hao6v 家族行为）；
+    - entry_urls 非空 → 逐入口抓取（分类页/版块页站点，如电影港新版、1lou）。
+    - is_current：当前解析站点（每次解析优先使用，失效时按启用顺序降级）。
+    """
+
+    id: Optional[int] = None
+    module_id: str = "hao6v"
+    name: str = ""
+    entry_urls: list = field(default_factory=list)
+    enabled: bool = True
+    is_current: bool = False
+    note: str = ""
+    created_at: int = 0
+
+    def entries(self) -> list:
+        return [u for u in (self.entry_urls or []) if u]
+
+
+def site_from_row(row: Any) -> SiteInstance:
+    urls: list = []
+    try:
+        data = json.loads(row["entry_urls"] or "[]")
+        urls = [str(x) for x in data if x]
+    except Exception:
+        urls = []
+    return SiteInstance(
+        id=row["id"], module_id=row["module_id"] or "hao6v",
+        name=row["name"] or "", entry_urls=urls,
+        enabled=bool(row["enabled"]),
+        is_current=bool(row["is_current"]) if "is_current" in row.keys() else False,
+        note=row["note"] or "",
+        created_at=row["created_at"] or 0,
+    )
 
 
 @dataclass

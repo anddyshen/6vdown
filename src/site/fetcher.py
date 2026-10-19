@@ -18,19 +18,46 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 _CHARSET_RE = re.compile(r'charset\s*=\s*["\']?([\w-]+)', re.IGNORECASE)
 
 
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text[:4000])
+
+
 def decode_bytes(raw: bytes) -> str:
+    """解码页面字节。
+
+    顺序策略（兼容部分 CDN 节点“声明 gb2312、实际输出 UTF-8”的情况）：
+      1) 能按 UTF-8 干净解码且含中文 → 直接采用（GBK 字节几乎不可能通过）；
+      2) 按页面声明 → gb18030 顺序严格解码；
+      3) 全部严格失败时，取替换字符最少的编码。
+    """
     head = raw[:1500].decode("latin1", "ignore")
     m = _CHARSET_RE.search(head)
-    declared = m.group(1) if m else ""
-    candidates = [declared, "gb18030", "utf-8"]
-    for enc in candidates:
-        if not enc:
-            continue
+    declared = (m.group(1) or "").lower() if m else ""
+    ordered: list = []
+    for enc in (declared, "gb18030", "utf-8"):
+        if enc and enc not in ordered:
+            ordered.append(enc)
+    try:
+        text = raw.decode("utf-8")
+        if _has_cjk(text):
+            return text
+    except (UnicodeDecodeError, LookupError):
+        pass
+    for enc in ordered:
         try:
             return raw.decode(enc)
         except (UnicodeDecodeError, LookupError):
             continue
-    return raw.decode("gb18030", "replace")
+    best = None
+    for enc in ordered:
+        try:
+            soft = raw.decode(enc, "replace")
+        except LookupError:
+            continue
+        n = soft.count("\ufffd")
+        if best is None or n < best[0]:
+            best = (n, soft)
+    return best[1] if best else raw.decode("gb18030", "replace")
 
 
 class SiteFetcher:
