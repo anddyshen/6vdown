@@ -696,8 +696,8 @@ class TestServiceSearchOptions(unittest.TestCase):
         self.assertTrue(res["items"][0].magnets)
 
 
-class _PanPriorityModule(SiteModule):
-    """搜索结果中网盘帖排在最后，用于验证自动解析的优先级。"""
+class _DatedModule(SiteModule):
+    """搜索结果带日期：验证自动解析按“时间倒序”抓最上面的条目。"""
 
     supports_search = True
 
@@ -711,12 +711,11 @@ class _PanPriorityModule(SiteModule):
                           base="https://x.example/")
 
     def parse_search(self, text, base_url):
-        items = [ParseItem(title="普通片%d" % i,
-                           detail_url="%s%d.html" % (base_url, i))
-                 for i in range(1, 6)]
-        items.append(ParseItem(title="[网盘电影]网盘片",
-                               detail_url=base_url + "pan.html"))
-        return items
+        rows = (("老片", "2020-01-01"), ("新片", "2026-07-01"),
+                ("中期", "2024-05-01"), ("[网盘电影]网盘片", "2026-06-01"))
+        return [ParseItem(title=t, date=d,
+                          detail_url="%s%d.html" % (base_url, i))
+                for i, (t, d) in enumerate(rows)]
 
     def parse_detail(self, html, item):
         item.magnets = [MagnetLink(label="夸克",
@@ -724,18 +723,31 @@ class _PanPriorityModule(SiteModule):
                                    kind="pan")]
 
 
-class TestAutoDetailPriority(unittest.TestCase):
-    """自动解析应优先照顾排在后面的网盘帖。"""
+class TestAutoDetailOrder(unittest.TestCase):
+    """自动解析顺序必须与界面一致：日期倒序，先抓最上面的。"""
 
     def setUp(self):
         self._dir = tempfile.mkdtemp()
         self.db = Database(path=os.path.join(self._dir, "t.db"))
-        register_module(_PanPriorityModule())
+        register_module(_DatedModule())
 
     def tearDown(self):
         reload_external_modules()
 
-    def test_pan_post_parsed_first(self):
+    def test_newest_items_parsed_first(self):
+        class _F(_FakeFetcher):
+            def post(self, url, data=None, timeout=18, encoding=None,
+                     referer="", cache=False, headers=None):
+                return "<html>detail</html>", url
+
+        svc = SiteParseService(self.db, _F({}))
+        res = svc.search("阿凡达", sites=[3], auto_detail=2,
+                         min_interval=0)
+        parsed = [it.title for it in res["items"] if it.magnets]
+        self.assertEqual(set(parsed), {"新片", "[网盘电影]网盘片"})
+
+    def test_pan_title_alone_does_not_jump_queue(self):
+        """网盘标记不再插队：更旧的网盘帖不会被优先解析。"""
         class _F(_FakeFetcher):
             def post(self, url, data=None, timeout=18, encoding=None,
                      referer="", cache=False, headers=None):
@@ -744,9 +756,8 @@ class TestAutoDetailPriority(unittest.TestCase):
         svc = SiteParseService(self.db, _F({}))
         res = svc.search("阿凡达", sites=[3], auto_detail=1,
                          min_interval=0)
-        parsed = [it for it in res["items"] if it.magnets]
-        self.assertEqual(len(parsed), 1)
-        self.assertIn("网盘", parsed[0].title)
+        parsed = [it.title for it in res["items"] if it.magnets]
+        self.assertEqual(parsed, ["新片"])
 
 
 class TestResourceKey(unittest.TestCase):

@@ -434,15 +434,12 @@ class SiteParseService:
              f"耗时 {summary['elapsed']}s")
 
         # 自动抓取前 N 条详情页资源（搜索结果本身通常不含磁力/网盘）。
-        # 网盘帖往往排在结果后段，这里优先解析标题带网盘标记的条目，
-        # 否则用户永远看不到「网盘」资源。
+        # 顺序必须与界面一致：按发布日期倒序取最上面的 N 条，
+        # 否则会出现“上面的最新条目没解析、下面的却解析了”。
         if auto_detail and pairs:
-            from .netdisk import looks_pan_title
-
-            def _pan_first(pair) -> int:
-                return 0 if looks_pan_title(pair[1].title or "") else 1
-
-            ordered = sorted(pairs, key=_pan_first)[:max(0, int(auto_detail))]
+            ordered = sorted(
+                pairs, key=lambda p: (getattr(p[1], "date", "") or ""),
+                reverse=True)[:max(0, int(auto_detail))]
             ok = fail = 0
             for mid, it in ordered:
                 if cancel and cancel():

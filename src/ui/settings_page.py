@@ -475,11 +475,11 @@ class SettingsPage(QWidget):
 
     # ============================================================ 解析站点
     def _site_group(self) -> QWidget:
-        g = QGroupBox("🗺️ 解析站点（多站点模块；勾选解析范围请在“解析工作台”顶部按钮）")
+        g = QGroupBox("🗺️ 解析站点（可设默认站点；勾选解析范围请在“解析工作台”顶部按钮）")
         lay = QVBoxLayout(g)
-        self.site_table = QTableWidget(0, 5)
+        self.site_table = QTableWidget(0, 6)
         self.site_table.setHorizontalHeaderLabels(
-            ["站点", "模块", "入口", "启用", "操作"])
+            ["站点", "模块", "入口", "启用", "默认", "操作"])
         hh = self.site_table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.site_table.verticalHeader().setVisible(False)
@@ -526,10 +526,23 @@ class SettingsPage(QWidget):
             self.site_table.setItem(r, 2, QTableWidgetItem(
                 "\n".join(entries) if entries else "（镜像域名池）"))
             self.site_table.setItem(r, 3, QTableWidgetItem("✓" if s.enabled else ""))
+            is_cur = bool(getattr(s, "is_current", False))
+            cur_item = QTableWidgetItem("● 默认" if is_cur else "")
+            cur_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            cur_item.setToolTip("默认站点：搜索页/工作台的“仅默认站点”使用该站点")
+            self.site_table.setItem(r, 4, cur_item)
             cell = QWidget()
             hl = QHBoxLayout(cell)
             hl.setContentsMargins(4, 2, 4, 2)
             hl.setSpacing(6)
+            if not is_cur:
+                b_cur = QPushButton("设为默认")
+                b_cur.setFixedSize(66, 26)
+                b_cur.setCursor(Qt.CursorShape.PointingHandCursor)
+                b_cur.setToolTip("把该站点设为默认解析站点")
+                b_cur.clicked.connect(
+                    lambda _=False, sid=s.id: self._site_set_default(sid))
+                hl.addWidget(b_cur)
             b_edit = QPushButton("编辑")
             b_edit.setFixedSize(50, 26)
             b_edit.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -541,15 +554,24 @@ class SettingsPage(QWidget):
             hl.addWidget(b_edit)
             hl.addWidget(b_del)
             hl.addStretch(1)
-            self.site_table.setCellWidget(r, 4, cell)
+            self.site_table.setCellWidget(r, 5, cell)
             self.site_table.setRowHeight(r, 38)
         if not sites:
             self.site_log.setText("（暂无站点实例，重新打开本页会自动补写内置站点）")
         else:
             self.site_log.setText(self._site_selection_text())
 
+    def _site_set_default(self, site_id) -> None:
+        """设为默认站点：搜索页/工作台的“仅默认站点”都用它。"""
+        try:
+            self.db.set_current_site(site_id)
+        except Exception as e:
+            QMessageBox.warning(self, "设置失败", str(e))
+            return
+        self.reload_sites()
+
     def _site_selection_text(self) -> str:
-        """显示工作台当前勾选的解析范围。"""
+        """显示默认站点与工作台当前勾选的解析范围。"""
         try:
             sites = self.db.list_sites(enabled_only=True)
         except Exception:
@@ -560,13 +582,18 @@ class SettingsPage(QWidget):
                 sel.append(int(x))
             except (TypeError, ValueError):
                 continue
+        try:
+            cur = self.db.current_site()
+        except Exception:
+            cur = None
+        head = f"默认站点：{cur.name}。" if cur else "默认站点：未设置。"
         picked = ([s for s in sites if s.id in sel] if sel else list(sites))
         if not picked:
-            return "当前无可用站点：请先在上方启用至少一个站点。"
+            return head + "当前无可用站点：请先在上方启用至少一个站点。"
         if len(picked) == len(sites):
-            return f"解析范围：全部 {len(picked)} 个启用站点（工作台可改）"
-        return ("解析范围：" + "、".join(s.name for s in picked)
-                + "（工作台可改）")
+            return head + f"解析范围：全部 {len(picked)} 个启用站点（工作台可改）"
+        return head + ("解析范围：" + "、".join(s.name for s in picked)
+                       + "（工作台可改）")
 
     def _selected_site(self):
         sel = self.site_table.selectionModel().selectedRows()
