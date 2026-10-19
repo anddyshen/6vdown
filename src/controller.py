@@ -17,9 +17,10 @@ from .downloader.manager import TYPE_LABELS
 from .emby_client import EmbyClient
 from .linkparse import magnet_hash, parse_text
 from .log import get_logger
-from .models import Subscription, TaskRecord
+from .models import ParseItem, Subscription, TaskRecord
 from .scheduler_iface import AutoParseController
 from .site import mirrors as mirror_mod
+from .site.modules import get_module
 from .site.fetcher import SiteFetcher
 from .site.service import SiteParseService
 from .subscription_engine import filter_subscription_updates
@@ -29,10 +30,12 @@ from .ui.history_page import HistoryPage
 from .ui.icons import app_icon
 from .ui.main_window import MainWindow
 from .ui.notify import NotifyManager
+from .ui.search_page import SearchPage
 from .ui.settings_page import SettingsPage
 from .ui.subscription_confirm_dialog import SubscriptionConfirmDialog
 from .ui.subscription_page import SubscriptionPage
-from .ui.workers import MirrorProbeWorker, ParseWorker, SendRunnable
+from .ui.workers import (MirrorProbeWorker, ParseWorker, SearchWorker,
+                         SendRunnable)
 from .ui.workbench import MagnetDialog
 
 log = get_logger("controller")
@@ -65,6 +68,7 @@ class Controller(QObject):
         self.sub_page = SubscriptionPage(self)
         self.history_page = HistoryPage(self.db)
         self.settings_page = SettingsPage(self)
+        self.search_page = SearchPage(self)
         self.window = MainWindow(self)
         self.drop = DropWindow(self.cfg)
 
@@ -95,6 +99,13 @@ class Controller(QObject):
         wb.on_subscribe = self.subscribe_item
         self.sub_page.check_all_clicked.connect(self.run_subscription_check)
         self.history_page.on_re_send = self.re_send_task
+        sp = self.search_page
+        sp.search_clicked.connect(self.start_search)
+        sp.stop_clicked.connect(self.stop_search)
+        sp.on_add_single = self.add_item_to_downloader
+        sp.on_open_detail = self.open_magnet_dialog
+        sp.on_subscribe = self.subscribe_item
+        sp.on_fetch_detail = self.fetch_item_detail
         self.drop.dropped.connect(self.on_dropped)
         self._setup_tray()
         try:
@@ -184,9 +195,8 @@ class Controller(QObject):
             self.act_enable.blockSignals(True)
             self.act_enable.setChecked(not flag)
             self.act_enable.blockSignals(False)
-        icon = app_icon(gray=flag)
-        self.window.setWindowIcon(icon)
-        self.tray.setIcon(icon)
+        # 仅托盘图标在禁用时灰显；窗口/任务栏图标始终保持正常蓝色
+        self.tray.setIcon(app_icon(gray=flag))
         self.tray.setToolTip("6vdown · 已禁用（图标灰色）" if flag
                              else "6vdown · 电影站下载解析器")
 
@@ -403,6 +413,70 @@ class Controller(QObject):
             self._parse.cancel()
             self.window.workbench.append_log("正在停止解析……")
 
+    # ------------------------------------------------------------ 搜索
+    def start_search(self, keyword: str) -> None:
+        """按关键词跨站点搜索（后台线程，日志实时回传）。"""
+        sp = self.search_page
+        if self._parse and self._parse.isRunning():
+            sp.status_lab.setText("解析任务正在运行，请稍候")
+            return
+        sites = list(self.cfg.get("search_sites") or [])
+        worker = SearchWorker(
+            self.service, keyword=keyword, sites=sites,
+            max_pages=max(1, int(self.cfg.get("search_max_pages", 1) or 1)),
+            polite_delay=float(self.cfg.get("search_polite_delay", 0.3)),
+            concurrency=max(1, int(self.cfg.get("search_concurrency", 2) or 1)),
+            history_limit=int(self.cfg.get("search_history_size", 20) or 20),
+            limit=int(sp.current_limit() or 0),
+            auto_detail=int(self.cfg.get("search_auto_detail", 8) or 0),
+        )
+        worker.log_line.connect(sp.append_log)
+        worker.done.connect(self._on_search_done)
+        self._parse = worker          # 与解析任务互斥，共用一个取消入口
+        sp.set_busy(True)
+        sp.append_log(f"开始搜索：{keyword}")
+        worker.start()
+
+    def stop_search(self) -> None:
+        if self._parse:
+            self._parse.cancel()
+            self.search_page.append_log("正在停止搜索……")
+
+    def fetch_item_detail(self, item, module_id: str = "") -> bool:
+        """按需抓取单个条目的详情页磁力/简介（用于未入库的搜索结果）。
+
+        返回是否成功；失败时把原因写进 item.error。
+        """
+        module = get_module(module_id) if module_id else None
+        if module is None and self.db is not None:
+            cur = self.db.current_site()
+            module = get_module(getattr(cur, "module_id", "") or "")
+        if module is None or not getattr(item, "detail_url", ""):
+            return False
+        try:
+            html, _ = self.fetcher.get(item.detail_url, timeout=14)
+            module.parse_detail(html, item)
+            item.detail_ok = True
+            return True
+        except Exception as e:
+            item.error = f"{type(e).__name__}: {e}"
+            return False
+
+    def _on_search_done(self, summary: dict) -> None:
+        sp = self.search_page
+        sp.set_busy(False)
+        if self._parse:
+            self._parse.deleteLater()
+        self._parse = None
+        sp.load_results(summary)
+        if not summary.get("ok"):
+            errs = [e for e in (summary.get("errors") or []) if e]
+            self.notify_err("搜索失败", errs[0] if errs else "没有搜索到结果")
+            return
+        self.notify_tip("搜索完成",
+                        f"“{summary.get('keyword', '')}” 命中 "
+                        f"{summary.get('total', 0)} 条")
+
     def _on_parse_done(self, summary: dict) -> None:
         import traceback as _tb
 
@@ -562,9 +636,10 @@ class Controller(QObject):
         collected_updates: list[dict] = []
 
         for sub in active_subs:
-            # 抓取详情页
-            item = self.fetcher.fetch_detail(sub.detail_url)
-            if not item or not item.magnets:
+            # 抓取详情页（SiteFetcher 无 fetch_detail，统一走 fetch_item_detail）
+            item = ParseItem(title=sub.title or "",
+                             detail_url=sub.detail_url or "")
+            if not self.fetch_item_detail(item):
                 continue
 
             # 更新最新集标识

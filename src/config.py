@@ -44,6 +44,14 @@ DEFAULTS = {
     "ai_model": "",                # 如 deepseek-chat / qwen2.5:7b
     "ai_api_key_enc": "",          # DPAPI 加密存储（明文不落盘）
     "ai_timeout": 90,              # 单次生成超时（秒）
+    # 关键词搜索（跨站点并发；结果不入库，按需抓详情页）
+    "search_sites": [],            # 参与搜索的站点 id 列表；空 = 全部支持搜索的启用站点
+    "search_max_pages": 1,         # 每站点最多翻几页
+    "search_limit": 80,            # 每站点结果上限
+    "search_polite_delay": 0.3,    # 站内翻页间隔
+    "search_concurrency": 2,       # 跨站点并发数
+    "search_history_size": 20,     # 历史关键词保留条数
+    "search_auto_detail": 8,       # 搜索后自动抓取前 N 条详情页资源（0 = 关闭）
 }
 
 

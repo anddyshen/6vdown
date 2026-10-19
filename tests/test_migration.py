@@ -35,14 +35,14 @@ class TestDataMigration(unittest.TestCase):
         self.old_dir = os.path.join(self.tmp.name, "appdata", "C2Down")
         os.makedirs(self.new_dir)
         os.makedirs(self.old_dir)
-        self._orig = (app_mod.app_data_dir, app_mod.legacy_data_dir,
+        self._orig = (app_mod.app_data_dir, app_mod.legacy_data_dirs,
                       constants.is_frozen)
         app_mod.app_data_dir = lambda: self.new_dir
-        app_mod.legacy_data_dir = lambda: self.old_dir
+        app_mod.legacy_data_dirs = lambda: [self.old_dir]
         constants.is_frozen = lambda: True
 
     def tearDown(self):
-        (app_mod.app_data_dir, app_mod.legacy_data_dir,
+        (app_mod.app_data_dir, app_mod.legacy_data_dirs,
          constants.is_frozen) = self._orig
         self.tmp.cleanup()
 
@@ -72,6 +72,21 @@ class TestDataMigration(unittest.TestCase):
         _migrate_legacy_data()
         self.assertEqual(_read(os.path.join(self.new_dir, "6vdown.db")),
                          b"KEEP")
+
+
+class TestPortableDataDir(unittest.TestCase):
+    """绝对绿色：数据目录只跟随程序目录，不落系统目录。"""
+
+    def test_data_dir_is_next_to_program(self):
+        self.assertNotIn("APPDATA", constants.app_data_dir().upper())
+        self.assertNotIn("LOCALAPPDATA", constants.app_data_dir().upper())
+
+    def test_source_mode_uses_project_data(self):
+        if constants.is_frozen():
+            self.skipTest("打包环境")
+        self.assertEqual(
+            os.path.normcase(constants.app_data_dir()),
+            os.path.normcase(os.path.join(constants.project_root(), "data")))
 
 
 if __name__ == "__main__":

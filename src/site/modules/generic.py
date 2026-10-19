@@ -15,14 +15,17 @@
 from __future__ import annotations
 
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 from ... import constants
 from ...models import MagnetLink, ParseItem
+from ..netdisk import PAN_HOSTS, is_netdisk_url, netdisk_name
 from ..parser import clean_html
-from .base import ModuleMeta, SiteModule
+from .base import (ModuleMeta, SearchSpec, SiteModule, looks_detail_url,
+                   root_url)
 
 # ---------------------------------------------------------------- 默认值
 DEFAULT_MAGNET_RE = r"magnet:\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}"
@@ -33,9 +36,8 @@ DEFAULT_EXCLUDE = ("更多", "下一页", "上一页", "尾页", "首页", "返�
                    "注册", "迅雷", "发帖", "回复", "查看", "版权", "免责",
                    "榜单", "排行榜", "教程", "帮助", "论坛", "联系我们",
                    "公告", "专题", "留言板")
-DEFAULT_PAN_RES = ("pan.quark.cn", "aliyundrive.com", "alipan.com",
-                   "pan.baidu.com", "drive.uc.cn", "cloud.189.cn",
-                   "xunlei.com", "115.com", "weiyun.com")
+# 网盘域名统一维护在 src/site/netdisk.py，供所有模块共用
+DEFAULT_PAN_RES = PAN_HOSTS
 DEFAULT_ATTACH_RES = ("attach-download", "/download/", "download.php")
 DEFAULT_TITLE_QUAL_RE = (
     r"(\d{4}|《|》|1080|720p|4K|BD|HD|WEB|全集|更新至|第\s*\d+\s*集|"
@@ -90,6 +92,31 @@ class DetailRule:
     desc_mode: str = "meta"               # meta | info | text | none
 
 
+def _pan_res_of(de: dict) -> tuple:
+    """规则声明的 pan_res 与统一网盘域名合并（去重保序）。
+
+    域名清单统一维护在 ``src/site/netdisk.py``，规则 JSON 只需写站点特有的
+    额外域名，甚至可以不写。
+    """
+    extra = tuple(de.get("pan_res") or ())
+    return tuple(dict.fromkeys(extra + tuple(DEFAULT_PAN_RES)))
+
+
+@dataclass
+class SearchRule:
+    """站内搜索规则（可选；缺省 = 该模块不支持搜索）。"""
+
+    enabled: bool = False
+    url: str = ""                         # 支持 {keyword} / {keyword_enc} / {page}
+    method: str = "POST"                  # GET | POST
+    params: dict = field(default_factory=dict)  # 值同样支持占位符
+    encoding: str = ""                    # 缺省沿用规则顶层 encoding
+    referer: str = ""                     # 缺省 = 站点根地址
+    max_pages: int = 1
+    # 结果页结构；缺省沿用 extract（多数站点搜索页与列表页同构）
+    result: Optional[ExtractRule] = None
+
+
 @dataclass
 class GenericRule:
     """一条完整的模块规则。"""
@@ -104,6 +131,7 @@ class GenericRule:
     page_template: str = ""               # 如 {entry}index_{page}.html
     extract: ExtractRule = field(default_factory=ExtractRule)
     detail: DetailRule = field(default_factory=DetailRule)
+    search: Optional[SearchRule] = None
 
     # ------------------------------------------------------------ 构造
     @classmethod
@@ -112,6 +140,7 @@ class GenericRule:
             raise ValueError("规则必须是 JSON 对象")
         ex = dict(data.get("extract") or {})
         de = dict(data.get("detail") or {})
+        sr = data.get("search")
         skip = ex.get("skip_titles")
         rule = cls(
             module_id=str(data.get("module_id") or "").strip(),
@@ -144,11 +173,12 @@ class GenericRule:
             ),
             detail=DetailRule(
                 magnet_re=str(de.get("magnet_re") or DEFAULT_MAGNET_RE),
-                pan_res=tuple(de.get("pan_res") or DEFAULT_PAN_RES),
+                pan_res=_pan_res_of(de),
                 attach_res=tuple(de.get("attach_res") or DEFAULT_ATTACH_RES),
                 desc_mode=str(de.get("desc_mode") or "meta"),
             ),
         )
+        rule.search = _search_rule_from_dict(sr)
         return rule
 
     def to_dict(self) -> dict:
@@ -188,6 +218,86 @@ class GenericRule:
                 "desc_mode": self.detail.desc_mode,
             },
         }
+        if self.search is not None:
+            out["search"] = _search_rule_to_dict(self.search)
+        return out
+
+
+# ---------------------------------------------------------------- 搜索规则
+def _extract_from_dict(data: dict) -> ExtractRule:
+    """dict → ExtractRule（只覆盖显式给出的字段，未给出的留空）。"""
+    skip = data.get("skip_titles")
+    return ExtractRule(
+        mode=str(data.get("mode") or ""),
+        row_re=str(data.get("row_re") or ""),
+        link_re=str(data.get("link_re") or ""),
+        title_re=str(data.get("title_re") or ""),
+        status_re=str(data.get("status_re") or ""),
+        date_re=str(data.get("date_re") or ""),
+        block_re=str(data.get("block_re") or ""),
+        block_row_re=str(data.get("block_row_re") or ""),
+        block_name_map=dict(data.get("block_name_map") or {}),
+        block_map=dict(data.get("block_map") or {}),
+        skip_row_re=str(data.get("skip_row_re") or ""),
+        skip_titles=tuple(skip) if skip else (),
+        min_title_len=int(data.get("min_title_len") or 0),
+        title_qual_re=str(data.get("title_qual_re") or ""),
+        title_status_join=bool(data.get("title_status_join", True)),
+        alt_complete=bool(data.get("alt_complete", False)),
+        red_re=str(data.get("red_re") or ""),
+        lookback=int(data.get("lookback") or 0),
+    )
+
+
+def _merge_extract(base: ExtractRule,
+                   over: Optional[ExtractRule]) -> ExtractRule:
+    """搜索结果规则合并：over 中留空的字段沿用主提取规则。"""
+    data = dict(base.__dict__)
+    for key, val in (over.__dict__.items() if over is not None else []):
+        if val in (None, "", [], {}, ()):
+            continue
+        data[key] = val
+    return ExtractRule(**data)
+
+
+def _search_rule_from_dict(data) -> Optional[SearchRule]:
+    if not isinstance(data, dict) or not data.get("enabled"):
+        return None
+    return SearchRule(
+        enabled=True,
+        url=str(data.get("url") or "").strip(),
+        method=str(data.get("method") or "POST").upper(),
+        params=dict(data.get("params") or {}),
+        encoding=str(data.get("encoding") or ""),
+        referer=str(data.get("referer") or ""),
+        max_pages=max(1, int(data.get("max_pages") or 1)),
+        result=(_extract_from_dict(data["result"])
+                if isinstance(data.get("result"), dict) else None),
+    )
+
+
+def _search_rule_to_dict(sr: SearchRule) -> dict:
+    out = {
+        "enabled": bool(sr.enabled),
+        "url": sr.url,
+        "method": sr.method,
+        "params": dict(sr.params or {}),
+        "encoding": sr.encoding,
+        "referer": sr.referer,
+        "max_pages": int(sr.max_pages or 1),
+    }
+    if sr.result is not None:
+        out["result"] = {k: v for k, v in sr.result.__dict__.items() if v}
+    return out
+
+
+def _apply_placeholders(value, keyword: str, page: int) -> str:
+    """替换搜索 URL/参数里的占位符：{keyword} {keyword_enc} {page}。"""
+    text = "" if value is None else str(value)
+    return (text
+            .replace("{keyword_enc}", urllib.parse.quote(keyword or "", safe=""))
+            .replace("{keyword}", keyword or "")
+            .replace("{page}", str(page)))
 
 
 # ---------------------------------------------------------------- 引擎
@@ -207,6 +317,12 @@ class GenericModule(SiteModule):
             encoding=rule.encoding,
         )
         self.max_list_pages = max(1, int(rule.max_pages or 1))
+        # 搜索（规则可选段；未配置 = 不支持搜索）
+        sr = rule.search
+        self.supports_search = bool(sr and sr.enabled and sr.url)
+        self.max_search_pages = (max(1, int(sr.max_pages or 1))
+                                 if self.supports_search else 1)
+        self._search_engine: Optional[GenericModule] = None
         self._compiled = False
         self._row_re = self._link_re = self._title_re = None
         self._status_re = self._date_re = self._block_re = None
@@ -246,6 +362,47 @@ class GenericModule(SiteModule):
         if self.rule.extract.mode == "date_anchor":
             return self._parse_date_anchor(html, base_url, entry_url)
         return self._parse_rows(html, base_url, entry_url)
+
+    # ------------------------------------------------------------ 搜索
+    def search_spec(self, keyword: str, page: int = 1,
+                    base: str = "") -> Optional[SearchSpec]:
+        sr = self.rule.search
+        if not (sr and sr.enabled and sr.url):
+            return None
+        root = root_url(base, (self.rule.entry_urls or [""])[0]
+                        if self.rule.entry_urls else "")
+        url = _apply_placeholders(sr.url, keyword, page)
+        if not url.lower().startswith(("http://", "https://")) and root:
+            url = urljoin(root, url)
+        data = {str(k): _apply_placeholders(v, keyword, page)
+                for k, v in (sr.params or {}).items()}
+        return SearchSpec(url=url, method=sr.method or "POST", data=data,
+                          encoding=sr.encoding or self.rule.encoding,
+                          referer=sr.referer or root, base=root)
+
+    def parse_search(self, text: str, base_url: str) -> list:
+        """搜索结果页 → list[ParseItem]（结果结构与列表页不同时可用 search.result 覆盖）。"""
+        eng = self._engine_for_search()
+        if eng is None:
+            return []
+        return eng.parse_list(text, base_url, "")
+
+    def _engine_for_search(self) -> Optional["GenericModule"]:
+        """搜索结果提取引擎：用 search.result 覆盖主 extract 得到的影子模块。"""
+        sr = self.rule.search
+        if not (sr and sr.enabled):
+            return None
+        if self._search_engine is None:
+            ex = _merge_extract(self.rule.extract, sr.result)
+            tmp = GenericRule(
+                module_id=self.rule.module_id, name=self.rule.name,
+                desc=self.rule.desc,
+                encoding=sr.encoding or self.rule.encoding,
+                entry_mode=self.rule.entry_mode,
+                entry_urls=list(self.rule.entry_urls),
+                extract=ex, detail=self.rule.detail)
+            self._search_engine = GenericModule(tmp, source=self.source)
+        return self._search_engine
 
     def parse_list_pages(self, html: str, base_url: str, entry_url: str = "",
                          fetcher=None, max_pages: int = 1,
@@ -394,8 +551,8 @@ class GenericModule(SiteModule):
                 kind = ("torrent"
                         if ".torrent" in (text + " " + url).lower() else "pan")
                 _add(text or url.rsplit("/", 1)[-1], url, kind)
-            elif any(r in href for r in d.pan_res):
-                _add(text or "网盘链接", href, "pan")
+            elif is_netdisk_url(href) or any(r in href for r in d.pan_res):
+                _add(text or netdisk_name(href), href, "pan")
         item.magnets = out
         if not item.desc:
             item.desc = self._desc(html)
@@ -423,13 +580,10 @@ class GenericModule(SiteModule):
         href = m.group(1) if m.groups() else m.group(0)
         return (href or "").strip().strip("\"'")
 
-    def _looks_detail(self, href: str) -> bool:
-        low = (href or "").lower()
-        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
-            return False
-        return (low.endswith((".htm", ".html"))
-                or ".htm?" in low or ".html?" in low
-                or "thread-" in low or re.search(r"/\d{3,}", low))
+    @staticmethod
+    def _looks_detail(href: str) -> bool:
+        """详情页链接判定（与 base.looks_detail_url 同一实现）。"""
+        return looks_detail_url(href)
 
     def _title_of(self, row: str, lm) -> str:
         ex = self.rule.extract

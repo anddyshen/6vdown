@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 import re
 import time
+import urllib.parse
+from typing import Optional
 
 import requests
 
@@ -60,6 +62,25 @@ def decode_bytes(raw: bytes) -> str:
     return best[1] if best else raw.decode("gb18030", "replace")
 
 
+def resolve_encoding(encoding: Optional[str]) -> str:
+    """规范化编码名：auto/空 → ""（交给自动探测）。"""
+    enc = (encoding or "").strip().lower()
+    if enc in ("", "auto", "automatic"):
+        return ""
+    return enc
+
+
+def decode_with(raw: bytes, encoding: Optional[str]) -> str:
+    """按编码解码；未指定时回退到自动探测 decode_bytes。"""
+    enc = resolve_encoding(encoding)
+    if enc:
+        try:
+            return raw.decode(enc, "replace")
+        except LookupError:
+            pass
+    return decode_bytes(raw)
+
+
 class SiteFetcher:
     """带 UA、超时、缓存副本的抓取器。"""
 
@@ -71,11 +92,57 @@ class SiteFetcher:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
 
-    def get(self, url: str, timeout: int = 18, cache: bool = False):
-        """GET 并解码为文本。cache=True 时保留一份 HTML 副本用于校准。"""
+    def get(self, url: str, timeout: int = 18, cache: bool = False,
+            encoding: Optional[str] = None):
+        """GET 并解码为文本。cache=True 时保留一份 HTML 副本用于校准。
+
+        encoding 非空时强制按该编码解码（POST/GET 搜索页多为 gb2312）。
+        """
         resp = self.session.get(url, timeout=timeout)
         resp.raise_for_status()
-        html = decode_bytes(resp.content)
+        html = decode_with(resp.content, encoding)
+        if cache:
+            self._save_cache(url, resp.content)
+        return html, resp.url
+
+    def warmup(self, url: str, timeout: int = 12) -> bool:
+        """预热会话：先 GET 一次页面拿到站点 cookie。
+
+        帝国 CMS 类的搜索接口依赖会话（响应会下发 ``*lastsearchtime``
+        cookie 用于节流），直接 POST 容易被判为异常请求。失败不影响后续。
+        """
+        if not url:
+            return False
+        try:
+            self.session.get(url, timeout=timeout)
+            return True
+        except Exception:
+            return False
+
+    def post(self, url: str, data=None, timeout: int = 18,
+             encoding: Optional[str] = None, referer: str = "",
+             cache: bool = False, headers: Optional[dict] = None):
+        """POST 表单并解码为文本。
+
+        - data 可为 dict（会按 encoding 做表单编码；gb2312 站点必需）或
+          已编码的 str/bytes（原样发送）；
+        - referer 非空时附加 Referer 头（部分 CMS 校验来源）。
+        """
+        body = data
+        req_headers = dict(headers or {})
+        if isinstance(data, dict):
+            enc = resolve_encoding(encoding) or "utf-8"
+            body = urllib.parse.urlencode(data, encoding=enc).encode(enc)
+            # 关键：手动编码后再传 bytes，requests 不会自动补 Content-Type，
+            # 缺了它 PHP 不会解析 $_POST，搜索关键字会变成空 → 无结果。
+            req_headers.setdefault(
+                "Content-Type", "application/x-www-form-urlencoded")
+        if referer:
+            req_headers["Referer"] = referer
+        resp = self.session.post(url, data=body, timeout=timeout,
+                                 headers=req_headers or None)
+        resp.raise_for_status()
+        html = decode_with(resp.content, encoding)
         if cache:
             self._save_cache(url, resp.content)
         return html, resp.url

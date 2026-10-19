@@ -43,8 +43,24 @@
   },
   "detail": {
     "magnet_re": "magnet:\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
-    "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com", "pan.baidu.com", "drive.uc.cn", "cloud.189.cn", "xunlei.com", "115.com", "weiyun.com"],
-    "attach_res": ["attach-download", "/download/", "download.php"],
+    "attach_res": [
+      "attach-download",
+      "/download/",
+      "download.php"
+    ],
     "desc_mode": "meta"
+  },
+  "search": {
+    "enabled": true,
+    "url": "https://www.dyg7.com/e/search/index.php",
+    "method": "POST",
+    "params": {
+      "keyboard": "{keyword}",
+      "show": "title,zhuyan",
+      "tempid": "1"
+    },
+    "encoding": "utf-8",
+    "referer": "https://www.dyg7.com/",
+    "max_pages": 1
   }
 }

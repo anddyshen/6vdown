@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS subscription_history(
   pushed_at INTEGER DEFAULT 0, UNIQUE(sub_id, magnet_url));
 CREATE TABLE IF NOT EXISTS settings(
   key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS search_history(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, keyword TEXT NOT NULL,
+  site_ids TEXT DEFAULT '', result_count INTEGER DEFAULT 0,
+  created_at INTEGER);
 """
 
 # parse_records 重建迁移用的新表 DDL（联合唯一）
@@ -179,6 +183,47 @@ class Database:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, str(value)),
             )
+
+    # -------------------------------------------------------- 搜索历史
+    def add_search_history(self, keyword: str, site_ids: Optional[list] = None,
+                           result_count: int = 0, limit: int = 20) -> None:
+        """记录一次搜索，并把总条数裁剪到 limit。"""
+        kw = (keyword or "").strip()
+        if not kw:
+            return
+        ids = ",".join(str(x) for x in (site_ids or []))
+        try:
+            with self._lock, self._conn() as c:
+                c.execute(
+                    "INSERT INTO search_history(keyword, site_ids,"
+                    " result_count, created_at) VALUES(?,?,?,?)",
+                    (kw, ids, int(result_count or 0), now_ms()))
+                c.execute(
+                    "DELETE FROM search_history WHERE id NOT IN "
+                    "(SELECT id FROM search_history ORDER BY created_at DESC"
+                    " LIMIT ?)", (max(1, int(limit or 20)),))
+        except Exception:
+            pass
+
+    def list_search_history(self, limit: int = 20) -> list:
+        """最近搜索关键词（去重，按时间倒序）。"""
+        try:
+            with self._lock, self._conn() as c:
+                rows = c.execute(
+                    "SELECT keyword, MAX(created_at) AS ts FROM"
+                    " search_history GROUP BY keyword ORDER BY ts DESC"
+                    " LIMIT ?", (max(1, int(limit or 20)),)).fetchall()
+            return [r["keyword"] for r in rows]
+        except Exception:
+            return []
+
+    def clear_search_history(self) -> None:
+        """清空搜索历史。"""
+        try:
+            with self._lock, self._conn() as c:
+                c.execute("DELETE FROM search_history")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------- hosts
     def list_hosts(self) -> list:

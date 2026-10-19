@@ -4,7 +4,9 @@
   "desc": "EmpireCMS 老模板 table 行布局；日期锚点提取（链接后 900 字符内必有日期）；标题被截断时用同条目 alt 补全。等价于内置 dygang 模块。",
   "encoding": "gb18030",
   "entry_mode": "entries",
-  "entry_urls": ["https://www.dygang.tv/"],
+  "entry_urls": [
+    "https://www.dygang.tv/"
+  ],
   "max_pages": 1,
   "page_template": "",
   "extract": {
@@ -15,7 +17,9 @@
     "status_re": "",
     "date_re": "(\\d{4})-(\\d{1,2})-(\\d{1,2})",
     "block_re": "<h([1-4])[^>]*>(.*?)</h\\1>",
-    "block_map": {"/": "最新电影"},
+    "block_map": {
+      "/": "最新电影"
+    },
     "skip_row_re": "",
     "min_title_len": 2,
     "title_qual_re": "",
@@ -25,8 +29,25 @@
   },
   "detail": {
     "magnet_re": "magnet:\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
-    "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com", "pan.baidu.com", "drive.uc.cn", "cloud.189.cn", "xunlei.com", "115.com", "weiyun.com"],
-    "attach_res": ["attach-download", "/download/", "download.php"],
+    "attach_res": [
+      "attach-download",
+      "/download/",
+      "download.php"
+    ],
     "desc_mode": "meta"
+  },
+  "search": {
+    "enabled": true,
+    "url": "https://www.dygang.tv/e/search/index.php",
+    "method": "POST",
+    "params": {
+      "tempid": "1",
+      "tbname": "article",
+      "keyboard": "{keyword}",
+      "show": "title,smalltext"
+    },
+    "encoding": "gb2312",
+    "referer": "https://www.dygang.tv/",
+    "max_pages": 1
   }
 }

@@ -422,9 +422,7 @@ def build_rule(entry_url: str, html: str, module_id: str = "",
         },
         "detail": {
             "magnet_re": r"magnet:\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
-            "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com",
-                        "pan.baidu.com", "drive.uc.cn", "cloud.189.cn",
-                        "xunlei.com", "115.com", "weiyun.com"],
+            # pan_res 由 src/site/netdisk.py 统一提供，无需逐站列举
             "attach_res": ["attach-download", "/download/", "download.php"],
             "desc_mode": "meta",
         },

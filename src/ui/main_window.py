@@ -1,4 +1,4 @@
-"""主窗口：单窗口多标签（工作台 / 历史 / 设置）。"""
+"""主窗口：单窗口多标签（工作台 / 订阅 / 历史 / 搜索 / 设置）。"""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -23,6 +23,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.workbench, "⚡ 解析工作台")
         self.tabs.addTab(ctl.sub_page, "📺 我的订阅")
         self.tabs.addTab(ctl.history_page, "📜 历史记录")
+        self.tabs.addTab(ctl.search_page, "🔍 搜索")
         self.tabs.addTab(ctl.settings_page, "⚙️ 设置")
         self.setCentralWidget(self.tabs)
 

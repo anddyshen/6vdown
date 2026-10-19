@@ -7,9 +7,11 @@
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 from .. import constants
 from ..database import Database
@@ -18,8 +20,55 @@ from ..models import MirrorSite, ParseItem, SiteInstance
 from . import mirrors as mirror_mod
 from .fetcher import SiteFetcher
 from .modules import get_module
+from .modules.base import trim_search_items
 
 log = get_logger("site.service")
+
+
+def _throttle_hint(text: str) -> str:
+    """识别站点返回的“信息提示/限流”页；空串表示响应正常。
+
+    帝国 CMS 搜索接口对同一 IP 有最小间隔限制，超限时会返回一张很短的
+    “信息提示”页（正文含“系统限制的搜索时间间隔为 N 秒”），此时解析
+    结果必然为空，需要等待后重试而不是当作“无结果”。
+    """
+    raw = text or ""
+    if not raw.lstrip().startswith("<"):
+        return ""              # JSON 接口按正常空结果处理
+    m = re.search(r"系统限制的搜索时间间隔为\s*(\d+)\s*秒", raw)
+    if m:
+        return f"站点限制搜索间隔 {m.group(1)} 秒，请稍后再试"
+    if "<title>信息提示</title>" in raw and len(raw) < 6000:
+        return "站点返回提示页（可能触发访问频率限制）"
+    return ""
+
+
+def _throttle_seconds(text: str) -> float:
+    """从限流提示里解析出需要等待的秒数。"""
+    m = re.search(r"系统限制的搜索时间间隔为\s*(\d+)\s*秒", text or "")
+    if not m:
+        return 0.0
+    try:
+        return float(m.group(1)) + 1.0       # 多等 1 秒留余量
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _resource_key(url: str) -> str:
+    """跨站点资源指纹（忽略 scheme / www / query / 大小写），用于搜索结果去重。"""
+    raw = (url or "").strip().lower()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "https://" + raw
+    try:
+        parts = urlparse(raw)
+    except Exception:
+        return raw
+    host = (parts.netloc or "").split("@")[-1].split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return f"{host}{(parts.path or '/').rstrip('/')}"
 
 
 class SiteParseService:
@@ -29,6 +78,9 @@ class SiteParseService:
         self._instance: Optional[SiteInstance] = None  # 本次解析使用的站点实例
         # 运行内详情缓存：detail_url -> (magnets, desc)，跨入口/版块去重抓取
         self._detail_cache: dict = {}
+        # 搜索结果缓存：(keyword, sites) -> (时间戳, summary)
+        self._search_cache: dict = {}
+        self._last_search_at: float = 0.0        # 上次搜索请求时刻（全局节流）
 
     # ------------------------------------------------------------- 镜像容灾
     def ensure_mirrors(self) -> None:
@@ -194,6 +246,260 @@ class SiteParseService:
              f"新增 {summary['new']} 条，更新 {summary['updated']} 条，"
              f"合并缓存 {len(merged)} 条")
         return summary
+
+    # ------------------------------------------------------------ 搜索入口
+    def search(self, keyword: str, sites: Optional[list] = None,
+               max_pages: int = 1, polite_delay: float = 0.3,
+               log_cb: Optional[Callable[[str], None]] = None,
+               cancel: Optional[Callable[[], bool]] = None,
+               concurrency: int = 2,
+               history_limit: int = 20,
+               limit: int = 0,
+               auto_detail: int = 0,
+               cache_ttl: int = 300,
+               min_interval: float = 10.5) -> dict:
+        """按关键词跨站点搜索（各站并发，站内分页串行）。
+
+        返回与 run() 同构的 summary：ok / keyword / total / items /
+        sites[] / errors[] / elapsed，便于 UI 复用同一套渲染逻辑。
+        搜索结果不落库（避免污染增量比对），可直接发送/复制/订阅。
+        limit：每站点结果上限（0 = 不限制）。
+        auto_detail：搜索后自动抓取前 N 条详情页资源（0 = 不自动抓）。
+        """
+        def emit(msg: str) -> None:
+            if log_cb:
+                try:
+                    log_cb(msg)
+                except Exception:
+                    pass
+
+        kw = (keyword or "").strip()
+        summary = {"ok": False, "keyword": kw, "total": 0, "items": [],
+                   "sites": [], "errors": [], "elapsed": 0.0}
+        if not kw:
+            summary["errors"].append("请输入搜索关键词")
+            emit("[搜索] 关键词为空")
+            return summary
+
+        t0 = time.time()
+        self.ensure_mirrors()
+        self.db.ensure_default_site()
+
+        # 短期缓存：同关键词/同站点组合在 TTL 内直接复用，
+        # 站点（尤其 EmpireCMS）对高频搜索有节流，重复搜索只会拿到空页。
+        try:
+            ttl = max(0, int(cache_ttl))
+        except (TypeError, ValueError):
+            ttl = 0
+        cache_key = (kw, tuple(str(x) for x in (sites or [])))
+        if ttl:
+            hit = self._search_cache.get(cache_key)
+            if hit and (time.time() - hit[0]) < ttl:
+                cached = dict(hit[1])
+                cached["cached"] = True
+                emit(f"[搜索] “{kw}” 命中缓存"
+                     f"（{int(time.time() - hit[0])}s 前的结果）")
+                return cached
+
+        instances = self._pick_instances(sites)
+        if not instances:
+            summary["errors"].append("没有可搜索的站点")
+            emit("[搜索] 没有可搜索的站点")
+            return summary
+
+        targets, unsupported = [], []
+        for inst in instances:
+            module = get_module(inst.module_id)
+            if module is None:
+                unsupported.append(f"{inst.name}：模块 {inst.module_id} 不存在")
+                continue
+            if not getattr(module, "supports_search", False):
+                unsupported.append(f"{inst.name}：该模块暂不支持搜索")
+                continue
+            targets.append((inst, module))
+        if unsupported:
+            summary["errors"] += unsupported
+            for msg in unsupported:
+                emit("[搜索] " + msg)
+        if not targets:
+            emit("[搜索] 没有支持搜索的站点")
+            return summary
+
+        emit(f"[搜索] “{kw}” → {len(targets)} 个站点："
+             + "、".join(i.name for i, _m in targets))
+
+        results: list = []
+        lock = threading.Lock()
+        workers = max(1, int(concurrency or 1))
+
+        def _wait_gap(seconds: float) -> bool:
+            """等待到满足最小间隔；返回是否被取消。"""
+            end = time.time() + max(0.0, seconds)
+            while time.time() < end:
+                if cancel and cancel():
+                    return True
+                time.sleep(0.2)
+            return False
+
+        def _run_once(inst, module, root):
+            """执行一次搜索，返回 (items, err, pages, throttled)。"""
+            pages: list = []
+            try:
+                items = module.search(
+                    kw, self.fetcher, max_pages=max_pages, base=root,
+                    polite_delay=polite_delay, log_cb=log_cb, cancel=cancel,
+                    page_html=pages)
+                if limit and len(items) > limit:
+                    items = trim_search_items(items, limit)
+                hint = ""
+                for p in pages:
+                    hint = _throttle_hint(p)
+                    if hint:
+                        break
+                if items or not hint:
+                    return items, "", pages, False
+                return items, hint, pages, True
+            except Exception as e:
+                return [], f"{type(e).__name__}: {e}", pages, False
+
+        def _work(order, inst, module) -> None:
+            root = (inst.entries() or [self._current_mirror_url()])[0]
+            err = ""
+            items: list = []
+            for attempt in range(3):
+                if cancel and cancel():
+                    emit("[停止] 任务被用户取消")
+                    break
+                with lock:                       # 全局最小间隔（IP 级节流）
+                    gap = time.time() - self._last_search_at
+                    wait = max(0.0, min_interval - gap)
+                    self._last_search_at = time.time() + wait
+                if wait > 0:
+                    emit(f"[搜索] 等待 {wait:.1f}s（站点限制搜索间隔）")
+                    if _wait_gap(wait):
+                        break
+                items, err, pages, throttled = _run_once(inst, module, root)
+                if not throttled:
+                    break
+                wait = 0.0
+                for p in pages:
+                    wait = _throttle_seconds(p)
+                    if wait:
+                        break
+                wait = wait or max(1.0, min_interval)
+                emit(f"[搜索] {inst.name} 触发站点搜索间隔限制，"
+                     f"{wait:.0f}s 后自动重试（{attempt + 1}/2）")
+                if _wait_gap(wait):
+                    break
+            with lock:
+                results.append({
+                    "_order": order, "site": root, "name": inst.name,
+                    "module": inst.module_id, "total": len(items),
+                    "items": items, "ok": not err, "error": err})
+            if err:
+                emit(f"[搜索] {inst.name} 失败：{err}")
+            else:
+                emit(f"[搜索] {inst.name} 命中 {len(items)} 条")
+
+        # 站点对同一 IP 的搜索有最小间隔限制（帝国 CMS 默认 10 秒），
+        # 并发只会互相挤占配额，因此这里始终串行，并在每次请求前补齐间隔。
+        packed = [(i, inst, mod) for i, (inst, mod) in enumerate(targets)]
+        for t in packed:
+            if cancel and cancel():
+                break
+            _work(*t)
+
+        results.sort(key=lambda r: r.get("_order", 0))
+        merged: list = []
+        pairs: list = []                 # [(module_id, ParseItem)]
+        seen: set = set()
+        for res in results:
+            mid = res.get("module") or ""
+            for it in res["items"]:
+                key = _resource_key(it.detail_url)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                merged.append(it)
+                pairs.append((mid, it))
+        # 结果缓存：同关键词短期内复用，避免反复触发站点节流
+        if kw:
+            self._search_cache[cache_key] = (time.time(), summary)
+        summary["sites"] = results
+        summary["items"] = merged
+        summary["total"] = len(merged)
+        summary["ok"] = any(r.get("ok") for r in results)
+        summary["elapsed"] = round(time.time() - t0, 1)
+        emit(f"[搜索] 完成：{len(merged)} 条（跨站去重后），"
+             f"耗时 {summary['elapsed']}s")
+
+        # 自动抓取前 N 条详情页资源（搜索结果本身通常不含磁力/网盘）。
+        # 网盘帖往往排在结果后段，这里优先解析标题带网盘标记的条目，
+        # 否则用户永远看不到「网盘」资源。
+        if auto_detail and pairs:
+            from .netdisk import looks_pan_title
+
+            def _pan_first(pair) -> int:
+                return 0 if looks_pan_title(pair[1].title or "") else 1
+
+            ordered = sorted(pairs, key=_pan_first)[:max(0, int(auto_detail))]
+            ok = fail = 0
+            for mid, it in ordered:
+                if cancel and cancel():
+                    break
+                self._fetch_search_detail(mid, it, polite_delay, emit)
+                if it.magnets:
+                    ok += 1
+                else:
+                    fail += 1
+            emit(f"[搜索] 自动解析详情：成功 {ok} 条，无资源 {fail} 条")
+        try:
+            self.db.add_search_history(
+                kw, site_ids=[i.id for i, _m in targets],
+                result_count=summary["total"], limit=history_limit)
+        except Exception:
+            pass
+        return summary
+
+    def _fetch_search_detail(self, module_id: str, item,
+                             polite_delay: float, emit) -> bool:
+        """抓取单条搜索结果的详情页资源（磁力/网盘/附件）。"""
+        module = get_module(module_id)
+        if module is None or not getattr(item, "detail_url", ""):
+            return False
+        last = ""
+        for attempt in range(2):          # 论坛站偶发超时，重试一次
+            try:
+                html, _ = self.fetcher.get(item.detail_url, timeout=25)
+                module.parse_detail(html, item)
+                item.detail_ok = True
+                item.error = ""
+                break
+            except Exception as e:
+                last = f"{type(e).__name__}: {e}"
+                item.error = last
+                if attempt == 0:
+                    time.sleep(1.5)
+        else:
+            emit(f"[搜索] 详情抓取失败 {item.title[:20]}：{last}")
+            return False
+        if polite_delay > 0:
+            time.sleep(min(polite_delay, 1.5))
+        return bool(item.magnets)
+
+    def _current_mirror_url(self) -> str:
+        """镜像池模式下的当前镜像地址（搜索入口基准）。"""
+        try:
+            for m in self.db.list_mirrors():
+                if m.enabled and m.is_current:
+                    return m.url
+            for m in self.db.list_mirrors():
+                if m.enabled:
+                    return m.url
+        except Exception:
+            pass
+        return (constants.DEFAULT_MIRRORS[0]
+                if constants.DEFAULT_MIRRORS else "")
 
     # ------------------------------------------------------------ 健康度
     def _mark_health(self, module_id: str, res: dict) -> None:

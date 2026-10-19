@@ -111,6 +111,38 @@ def validate_rule(data: dict) -> list:
     if str(de.get("desc_mode") or "meta") not in (
             "meta", "info", "text", "none"):
         errors.append("detail.desc_mode 只能是 meta/info/text/none")
+
+    # 搜索段（可选）：启用则必须给出 url；结果结构缺省沿用 extract
+    sr = data.get("search")
+    if isinstance(sr, dict) and sr.get("enabled"):
+        if not str(sr.get("url") or "").strip():
+            errors.append("已启用搜索时 search.url 不能为空")
+        if str(sr.get("method") or "POST").upper() not in ("GET", "POST"):
+            errors.append("search.method 只能是 GET 或 POST")
+        if sr.get("params") is not None and not isinstance(sr["params"], dict):
+            errors.append("search.params 必须是对象（表单字段 → 值）")
+        rex = sr.get("result")
+        if rex is not None and not isinstance(rex, dict):
+            errors.append("search.result 必须是对象（结果页提取规则）")
+        elif isinstance(rex, dict):
+            rmode = str(rex.get("mode") or ex.get("mode") or "rows")
+            if rmode not in ("rows", "date_anchor"):
+                errors.append("search.result.mode 只能是 rows 或 date_anchor")
+            if rmode == "rows" and not str(
+                    rex.get("row_re") or ex.get("row_re") or "").strip():
+                errors.append("搜索结果 rows 模式必须提供 row_re")
+            if rmode == "date_anchor" and not str(
+                    rex.get("date_re") or ex.get("date_re") or "").strip():
+                errors.append("搜索结果 date_anchor 模式必须提供 date_re")
+            for key in ("row_re", "link_re", "title_re", "status_re",
+                        "date_re", "block_re", "block_row_re", "skip_row_re",
+                        "title_qual_re", "red_re"):
+                pat = str(rex.get(key) or "")
+                if pat:
+                    try:
+                        re.compile(pat, re.S | re.I)
+                    except re.error as e:
+                        errors.append(f"search.result.{key} 正则无法编译：{e}")
     return errors
 
 

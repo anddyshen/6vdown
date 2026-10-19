@@ -520,9 +520,22 @@ class WorkbenchPage(QWidget):
                                     "尚无启用的解析站点，请先到设置页添加/启用")
             return
         selected = self._selected_site_ids()
+        default_site = None
+        if self.db is not None:
+            try:
+                default_site = self.db.current_site()
+            except Exception:
+                default_site = None
+        default_id = getattr(default_site, "id", 0) or 0
+        default_name = getattr(default_site, "name", "") or ""
         menu = QMenu(self)
-        act_all = menu.addAction("全选")
-        act_none = menu.addAction("全不选")
+        tip = menu.addAction("勾选后立即生效；不勾任何项 = 解析全部站点")
+        tip.setEnabled(False)
+        menu.addSeparator()
+        act_all = menu.addAction("全选（全部站点）")
+        act_default = menu.addAction(
+            f"仅默认站点（{default_name}）" if default_name else "仅默认站点")
+        act_default.setEnabled(bool(default_id))
         menu.addSeparator()
         actions = []
         for s in sites:
@@ -536,8 +549,8 @@ class WorkbenchPage(QWidget):
             return
         if chosen is act_all:
             ids = [s.id for s in sites]
-        elif chosen is act_none:
-            ids = []
+        elif chosen is act_default:
+            ids = [default_id] if default_id else []
         else:
             ids = [sid for sid, act in actions if act.isChecked()]
         if self.cfg is not None:

@@ -19,7 +19,7 @@ from urllib.parse import urljoin, urlparse
 
 from ...models import ParseItem
 from ..parser import clean_html
-from .base import ModuleMeta, SiteModule
+from .base import ModuleMeta, SearchSpec, SiteModule, root_url
 
 # 入口路径 → 区块 label（长前缀在前，优先匹配）
 _ENTRY_BLOCKS = (
@@ -42,17 +42,28 @@ _STATUS_RE = re.compile(r'<p class="other">\s*<i>(.*?)</i>', re.S)
 _ALT_RE = re.compile(r"alt\s*=\s*[\"']([^\"']+)[\"']", re.I)
 
 
+_SEARCH_PATH = "e/search/index.php"      # EmpireCMS 搜索入口（全站共用）
+_DEFAULT_ROOT = "https://www.dyg7.com/"
+
+
 class Dyg7Module(SiteModule):
     """电影港新版（dyg7.com 及其同模板镜像）。"""
 
     max_list_pages = 2  # 入口页 + 1 页翻页（列表无日期，靠翻页补增量）
 
+    # 搜索：EmpireCMS 通用 /e/search/index.php（POST · utf-8）
+    supports_search = True
+    max_search_pages = 1
+    search_result_limit = 80
+
     def __init__(self):
         self.meta = ModuleMeta(
             module_id="dyg7",
             name="电影港新版（dyg7.com）",
-            desc="EmpireCMS 新模板分类列表页；utf-8；.html 详情页；列表无日期",
+            desc=("EmpireCMS 新模板分类列表页；utf-8；.html 详情页；"
+                  "列表无日期；支持站内搜索"),
             entry_mode="entries",
+            encoding="utf-8",
             default_entry_urls=(
                 "https://www.dyg7.com/dy/",
                 "https://www.dyg7.com/dsj/dlj/",
@@ -99,11 +110,30 @@ class Dyg7Module(SiteModule):
         return items
 
     # ------------------------------------------------------------ 详情
+    # ------------------------------------------------------------ 搜索
+    def search_spec(self, keyword: str, page: int = 1,
+                    base: str = "") -> SearchSpec:
+        root = root_url(base, _DEFAULT_ROOT)
+        data = {"keyboard": keyword, "show": "title,zhuyan", "tempid": "1"}
+        if page > 1:
+            data["page"] = str(page)
+        return SearchSpec(url=urljoin(root, _SEARCH_PATH), method="POST",
+                          data=data, encoding="utf-8", referer=root,
+                          base=root)
+
+    def parse_search(self, text: str, base_url: str) -> list:
+        """搜索结果页的 li.p1 m1 结构与分类列表页一致 → 直接复用。"""
+        return parse_list(text, base_url, "")
+
     def parse_detail(self, html: str, item: ParseItem) -> None:
         # 磁力/简介与 6v 家族同构：磁力在下载区，简介取 meta description（◎）
+        from ..netdisk import extract_pan_links
         from ..parser import parse_detail_desc, parse_detail_magnets
 
         item.magnets = parse_detail_magnets(html)
+        # 详情页也可能给出网盘分享（含提取码），一并收录为“仅复制”资源
+        item.magnets += extract_pan_links(html, item.detail_url or "",
+                                         item.title or "")
         if not item.desc:
             item.desc = parse_detail_desc(html)
 

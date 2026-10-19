@@ -180,7 +180,6 @@ _SYSTEM_PROMPT = """你是一个“网页列表解析规则生成器”。用户
   },
   "detail": {
     "magnet_re": "magnet:\\\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
-    "pan_res": ["pan.quark.cn", "pan.baidu.com"],
     "attach_res": ["attach-download", "/download/"],
     "desc_mode": "meta|info|text|none"
   }

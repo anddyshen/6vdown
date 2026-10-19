@@ -7,7 +7,8 @@ import time
 
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox,
+    QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
     QListWidget, QListWidgetItem, QPlainTextEdit, QProgressBar, QPushButton,
     QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -172,6 +173,7 @@ class SettingsPage(QWidget):
         v.addWidget(self._emby_group())
         v.addWidget(self._ai_group())
         v.addWidget(self._modules_group())
+        v.addWidget(self._search_group())
         v.addWidget(self._general_group())
         v.addStretch(1)
         body.setLayout(v)
@@ -953,6 +955,48 @@ class SettingsPage(QWidget):
         self.reload_sites()
         self.mods_log_hint = f"已重新加载，用户规则模块 {n} 个"
 
+    # ============================================================ 搜索
+    def _search_group(self) -> QWidget:
+        g = QGroupBox("🔍 关键词搜索")
+        form = QFormLayout(g)
+
+        self.spin_search_limit = QSpinBox()
+        self.spin_search_limit.setRange(10, 500)
+        self.spin_search_limit.setSingleStep(10)
+        form.addRow("每站点结果上限", self.spin_search_limit)
+
+        self.spin_search_pages = QSpinBox()
+        self.spin_search_pages.setRange(1, 5)
+        form.addRow("每站点翻页数", self.spin_search_pages)
+
+        self.spin_search_conc = QSpinBox()
+        self.spin_search_conc.setRange(1, 8)
+        form.addRow("跨站点并发数", self.spin_search_conc)
+
+        self.spin_search_hist = QSpinBox()
+        self.spin_search_hist.setRange(0, 100)
+        form.addRow("历史关键词保留条数", self.spin_search_hist)
+
+        self.spin_search_auto = QSpinBox()
+        self.spin_search_auto.setRange(0, 50)
+        form.addRow("搜索后自动解析前 N 条详情", self.spin_search_auto)
+
+        self.spin_search_delay = QDoubleSpinBox()
+        self.spin_search_delay.setRange(0.0, 5.0)
+        self.spin_search_delay.setSingleStep(0.1)
+        self.spin_search_delay.setSuffix(" 秒")
+        form.addRow("搜索请求间隔（越大越礼貌）", self.spin_search_delay)
+
+        tip = QLabel(
+            "· 搜索结果**不入库**；“自动解析前 N 条详情”会在搜索后自动抓取资源"
+            "（磁力 / .torrent 附件 / 网盘），否则需手动点“解析所选详情”；\n"
+            "· 站点对高频搜索敏感（返回“信息提示”短页），默认已开启会话预热；"
+            "若仍频繁失败，请把并发调到 1 并增大间隔。")
+        tip.setStyleSheet("color:#64748b; font-size:11px;")
+        tip.setWordWrap(True)
+        form.addRow(tip)
+        return g
+
     # ============================================================ 通用
     def _general_group(self) -> QWidget:
         g = QGroupBox("⚙️ 通用偏好设置")
@@ -1112,6 +1156,13 @@ class SettingsPage(QWidget):
         c["ai_base_url"] = self.edit_ai_url.text().strip()
         c["ai_model"] = self.edit_ai_model.text().strip()
         c["ai_api_key_enc"] = self._ai_key_token(self.edit_ai_key.text())
+        # 搜索
+        c["search_limit"] = self.spin_search_limit.value()
+        c["search_max_pages"] = self.spin_search_pages.value()
+        c["search_concurrency"] = self.spin_search_conc.value()
+        c["search_history_size"] = self.spin_search_hist.value()
+        c["search_auto_detail"] = self.spin_search_auto.value()
+        c["search_polite_delay"] = round(self.spin_search_delay.value(), 2)
         c.save()
         self.ctl.apply_settings()
         self.ctl.notify_ok("设置已保存", "下载主机、订阅与 Emby 偏好已生效。")
@@ -1157,6 +1208,14 @@ class SettingsPage(QWidget):
         self.edit_ai_key.setPlaceholderText(
             "已保存的 Key 已解密显示；本机 Ollama 可留空")
         self._ai_toggle(self.chk_ai.isChecked())
+        # 搜索
+        self.spin_search_limit.setValue(int(c.get("search_limit", 80) or 80))
+        self.spin_search_pages.setValue(int(c.get("search_max_pages", 1) or 1))
+        self.spin_search_conc.setValue(int(c.get("search_concurrency", 2) or 2))
+        self.spin_search_hist.setValue(int(c.get("search_history_size", 20) or 20))
+        self.spin_search_auto.setValue(int(c.get("search_auto_detail", 8) or 0))
+        self.spin_search_delay.setValue(
+            float(c.get("search_polite_delay", 0.3) or 0.0))
 
     @staticmethod
     def _set_combo(combo: QComboBox, key) -> None:

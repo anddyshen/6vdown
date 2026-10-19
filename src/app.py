@@ -15,16 +15,31 @@ if __package__ in (None, ""):
 
 import sys
 
-from PySide6.QtCore import QLockFile
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QEvent, QLockFile, QObject
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QMessageBox
 
 from . import APP_NAME, __version__
-from .constants import app_data_dir, legacy_data_dir
+from .constants import app_data_dir, legacy_data_dirs
 from .ui.theme import apply_theme
 
 
+class _NoWheelSpinFilter(QObject):
+    """全局拦截数字输入框的鼠标滚轮：只能用上下箭头或键盘改值。
+
+    Qt 默认在鼠标悬停时滚动滚轮就会改数字（设置页、搜索页上限等），
+    很容易误改配置，故统一吞掉 QAbstractSpinBox 的 Wheel 事件。
+    """
+
+    def eventFilter(self, obj, event):  # noqa: N802
+        if (event.type() == QEvent.Type.Wheel
+                and isinstance(obj, QAbstractSpinBox)):
+            event.ignore()
+            return True
+        return super().eventFilter(obj, event)
+
+
 def _migrate_legacy_data() -> None:
-    """Green mode: migrate legacy APPDATA 6vdown data into data next to the exe."""
+    """首次启动把旧版留在 %APPDATA% 的数据搬到程序目录（之后只读写程序目录）。"""
     import os
     import shutil
 
@@ -33,29 +48,35 @@ def _migrate_legacy_data() -> None:
     if not constants.is_frozen():
         return
     new_dir = app_data_dir()
-    old_dir = legacy_data_dir()
-    if os.path.normcase(os.path.normpath(new_dir)) == \
-            os.path.normcase(os.path.normpath(old_dir)):
+    # 程序目录里已有数据（任一文件名）时优先保留，避免旧快照覆盖新数据
+    for name in ("6vdown.db", "c2down.db"):
+        if os.path.exists(os.path.join(new_dir, name)):
+            return
+    for old_dir in legacy_data_dirs():
+        if os.path.normcase(os.path.normpath(old_dir)) == \
+                os.path.normcase(os.path.normpath(new_dir)):
+            continue
+        old_db = ""
+        for name in ("6vdown.db", "c2down.db"):
+            p = os.path.join(old_dir, name)
+            if os.path.exists(p):
+                old_db = p
+                break
+        if not old_db:
+            continue
+        try:
+            os.makedirs(new_dir, exist_ok=True)
+            cfg_old = os.path.join(old_dir, "config.json")
+            if os.path.exists(cfg_old):
+                shutil.copy2(cfg_old, os.path.join(new_dir, "config.json"))
+            shutil.copy2(old_db, os.path.join(new_dir, "6vdown.db"))
+            cache_old = os.path.join(old_dir, "cache")
+            if os.path.isdir(cache_old):
+                shutil.copytree(cache_old, os.path.join(new_dir, "cache"),
+                                dirs_exist_ok=True)
+        except Exception:
+            pass
         return
-    new_db = os.path.join(new_dir, "6vdown.db")
-    old_db = os.path.join(old_dir, "c2down.db")
-    if os.path.exists(new_db) or not os.path.exists(old_db):
-        return
-    # 程序目录里已有数据（尚未改名）时优先保留，避免用更旧的 APPDATA 快照覆盖
-    if os.path.exists(os.path.join(new_dir, "c2down.db")):
-        return
-    try:
-        os.makedirs(new_dir, exist_ok=True)
-        cfg_old = os.path.join(old_dir, "config.json")
-        if os.path.exists(cfg_old):
-            shutil.copy2(cfg_old, os.path.join(new_dir, "config.json"))
-        shutil.copy2(old_db, new_db)
-        cache_old = os.path.join(old_dir, "cache")
-        if os.path.isdir(cache_old):
-            shutil.copytree(cache_old, os.path.join(new_dir, "cache"),
-                            dirs_exist_ok=True)
-    except Exception:
-        pass
 
 
 def _migrate_db_name() -> None:
@@ -79,6 +100,10 @@ def run(argv: list | None = None) -> int:
     app.setOrganizationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)
     apply_theme(app, "system")
+
+    # 全局禁用“鼠标滚轮改数字框”（避免误改设置），保留上下箭头/键盘
+    app._no_wheel_guard = _NoWheelSpinFilter(app)
+    app.installEventFilter(app._no_wheel_guard)
 
     # 便携数据目录 + 旧数据迁移（必须在 Database() 之前执行）
     # 顺序很重要：先把“程序目录里的 c2down.db”升级为 6vdown.db，

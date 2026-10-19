@@ -17,7 +17,36 @@
     "block_re": "<li[^>]*id=\"tab(\\d+)_btn_(\\d+)\"[^>]*>(.*?)</li>|<h([1-4])[^>]*>(.*?)</h\\4>",
     "block_map": {},
     "skip_row_re": "",
-    "skip_titles": ["更多", "下一页", "上一页", "尾页", "首页", "返回", "网站地图", "RSS", "收藏本站", "加入收藏", "全选", "登录", "注册", "迅雷", "发帖", "回复", "查看", "版权", "免责", "榜单", "排行榜", "教程", "帮助", "论坛", "联系我们", "公告", "专题", "留言板"],
+    "skip_titles": [
+      "更多",
+      "下一页",
+      "上一页",
+      "尾页",
+      "首页",
+      "返回",
+      "网站地图",
+      "RSS",
+      "收藏本站",
+      "加入收藏",
+      "全选",
+      "登录",
+      "注册",
+      "迅雷",
+      "发帖",
+      "回复",
+      "查看",
+      "版权",
+      "免责",
+      "榜单",
+      "排行榜",
+      "教程",
+      "帮助",
+      "论坛",
+      "联系我们",
+      "公告",
+      "专题",
+      "留言板"
+    ],
     "min_title_len": 5,
     "title_qual_re": "(\\d{4}|《|》|1080|720p|4K|BD|HD|WEB|全集|更新至|第\\s*\\d+\\s*集|剧场版|加长版|导演剪辑|中英|国语|粤语|国英|双语|中字|字幕)",
     "title_status_join": true,
@@ -26,8 +55,25 @@
   },
   "detail": {
     "magnet_re": "magnet:\\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}",
-    "pan_res": ["pan.quark.cn", "aliyundrive.com", "alipan.com", "pan.baidu.com", "drive.uc.cn", "cloud.189.cn", "xunlei.com", "115.com", "weiyun.com"],
-    "attach_res": ["attach-download", "/download/", "download.php"],
+    "attach_res": [
+      "attach-download",
+      "/download/",
+      "download.php"
+    ],
     "desc_mode": "meta"
+  },
+  "search": {
+    "enabled": true,
+    "url": "https://www.hao6v.cc/e/search/index.php",
+    "method": "POST",
+    "params": {
+      "show": "title,smalltext",
+      "tempid": "1",
+      "tbname": "article",
+      "keyboard": "{keyword}"
+    },
+    "encoding": "gb2312",
+    "referer": "https://www.hao6v.cc/",
+    "max_pages": 1
   }
 }

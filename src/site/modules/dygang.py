@@ -20,7 +20,7 @@ from urllib.parse import urljoin
 from ... import constants
 from ...models import ParseItem
 from ..parser import block_label_for_heading, clean_html, tab_block_label
-from .base import ModuleMeta, SiteModule
+from .base import ModuleMeta, SearchSpec, SiteModule, root_url
 
 _A_RE = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.S)
 _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.I)
@@ -53,15 +53,25 @@ _BLOCK_PRIORITY = {
 _LOOKBACK = 900  # 日期锚点向前寻找标题链接的窗口（实测行高约 200-400 字符）
 
 
+_SEARCH_PATH = "e/search/index.php"      # EmpireCMS 搜索入口（全站共用）
+_DEFAULT_ROOT = "https://www.dygang.tv/"
+
+
 class DygangModule(SiteModule):
     """电影港（dygang.tv 及其同模板镜像）。"""
+
+    # 搜索：EmpireCMS 通用 /e/search/index.php（POST · gb2312）
+    supports_search = True
+    max_search_pages = 1
+    search_result_limit = 80
 
     def __init__(self):
         self.meta = ModuleMeta(
             module_id="dygang",
             name="电影港（dygang.tv）",
-            desc="EmpireCMS 老模板 table 行布局；gb2312；.htm 详情页",
+            desc="EmpireCMS 老模板 table 行布局；gb2312；.htm 详情页；支持站内搜索",
             entry_mode="entries",
+            encoding="gb2312",
             default_entry_urls=("https://www.dygang.tv/",),
         )
 
@@ -69,12 +79,77 @@ class DygangModule(SiteModule):
                    include_unknown: bool = True) -> list:
         return parse_home(html, base_url)
 
+    def search_spec(self, keyword: str, page: int = 1,
+                    base: str = "") -> SearchSpec:
+        root = root_url(base, _DEFAULT_ROOT)
+        data = {"tempid": "1", "tbname": "article", "keyboard": keyword,
+                "show": "title,smalltext"}
+        if page > 1:
+            data["page"] = str(page)
+        return SearchSpec(url=urljoin(root, _SEARCH_PATH), method="POST",
+                          data=data, encoding="gb2312", referer=root,
+                          base=root)
+
+    def parse_search(self, text: str, base_url: str) -> list:
+        """搜索结果页 → list[ParseItem]。
+
+        结果页与首页结构不同：首页是「标题链接 → 日期」，而搜索结果页是
+        「图片链接 → 日期 → 标题链接(class=classlinkclass)」，故单独解析，
+        并按 ``<td width=50%>`` 切块避免跨条目取错日期。
+        """
+        return parse_search_results(text, base_url)
+
+
+# ---------------------------------------------------------------- 搜索解析
+_SEARCH_LINK_RE = re.compile(
+    r'<a\b[^>]*class\s*=\s*["\']?classlinkclass["\']?[^>]*>(.*?)</a>',
+    re.S | re.I)
+_ITEM_SPLIT_RE = re.compile(r"<td\s+width=['\"]?50%['\"]?\s*>", re.I)
+
+
+def parse_search_results(html: str, base_url: str) -> list:
+    """解析电影港搜索结果页（按条目块定位标题链接与日期）。"""
+    items: dict = {}
+    for chunk in _ITEM_SPLIT_RE.split(html or "")[1:]:
+        lm = _SEARCH_LINK_RE.search(chunk)
+        if not lm:
+            continue
+        hm = _HREF_RE.search(lm.group(0))
+        if not hm:
+            continue
+        href = (hm.group(1) or "").strip()
+        if not href.lower().endswith((".htm", ".html")):
+            continue
+        title = clean_html(lm.group(1))
+        if len(title) < 2 or any(t in title for t in _EXCLUDE_TAIL):
+            continue
+        detail = urljoin(base_url, href)
+        if detail in items:
+            continue
+        head = chunk[:lm.start()]
+        dates = list(_YMD_RE.finditer(head))
+        date = ""
+        if dates:
+            dm = dates[-1]
+            date = (f"{dm.group(1)}-{int(dm.group(2)):02d}"
+                    f"-{int(dm.group(3)):02d}")
+        items[detail] = ParseItem(
+            title=title, date=date, block="其他", detail_url=detail,
+            is_red=bool(_RED_FONT_RE.search(head[-300:] or "")
+                        or _RED_RE.search(head[-300:] or "")),
+            is_classic=("经典" in title))
+    return list(items.values())
+
     def parse_detail(self, html: str, item: ParseItem) -> None:
         # 详情页磁力/简介与 6v 家族同构：磁力在【下载地址】区，简介取 meta/◎
+        from ..netdisk import extract_pan_links
         from ..parser import parse_detail_desc, parse_detail_magnets
 
         item.magnets = parse_detail_magnets(html)
         item.desc = parse_detail_desc(html)
+        # 详情页也可能给出网盘分享（含提取码），一并收录为“仅复制”资源
+        item.magnets += extract_pan_links(html, item.detail_url or "",
+                                         item.title or "")
 
 
 # ---------------------------------------------------------------- 区块边界

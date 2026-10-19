@@ -8,7 +8,7 @@
 > 首页更新列表与各详情页的磁力链接，以【电影名称 · 对应日期 · 资源简介】列出，勾选或
 > 逐条即可发送到下载器。支持增量比对、镜像容灾、多集剧集分组、历史痕迹管理与一键打包 exe。
 
-当前版本：**v0.9.0**
+当前版本：**v1.0.1**
 
 ---
 
@@ -121,11 +121,13 @@ python -m unittest discover -s tests -p "test_*.py"   # 单元测试
 build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，含自定义图标）
 ```
 
-### 绿色便携
-- 将 `6vdown.exe` 放入任意文件夹双击运行，exe 同级会自动生成 `data\`（数据库/配置/缓存）；
+### 绿色便携（绝对绿色）
+- 将 `6vdown.exe` 放入任意文件夹双击运行，exe 同级自动生成 `data\`（数据库 / 配置 / 缓存 / 日志 / 单实例锁）；
 - 把整个文件夹拷贝到其它电脑或目录即可直接使用，**数据随目录走**；
-- 若 exe 位于不可写目录（如 Program Files）或便携介质只读，自动回退到 `%APPDATA%\6vdown`；
-- Upgrade note: legacy `%APPDATA%\C2Down` data and the old `data\c2down.db` are auto-migrated/renamed to the new file names on first run after this update; history and cache are kept.
+- **不写任何系统目录**（不写 `%APPDATA%`、不写注册表）；若程序目录只读（如 U 盘写保护，
+  或放在 Program Files），回退到“当前工作目录”的 `data\`，同样不落系统盘用户目录；
+- 首次启动会把旧版留在 `%APPDATA%\C2Down`、`%APPDATA%\6vdown` 的数据库/配置/缓存**单向迁移**到
+  程序目录（只读旧目录，此后只读写程序目录），旧文件 `data\c2down.db` 也会自动改名为 `6vdown.db`。
 
 ----
 
@@ -154,10 +156,12 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 | `src/database.py` | SQLite：主机、镜像、解析缓存、历史、运行记录 |
 | `src/site/fetcher.py` | 抓取与解码（GBK/UTF-8 自适应） |
 | `src/site/parser.py` | 首页区块/日期/星标规则与详情页磁力提取（hao6v 模板） |
+| `src/site/netdisk.py` | 网盘域名与链接识别的唯一来源：`PAN_HOSTS` / `PAN_URL_RE` / `is_netdisk_url()` / `netdisk_name()` / `extract_pan_links()`，各站点模块与规则引擎共用（新增网盘只需改这一处） |
 | `src/site/modules/` | 站点解析模块：`base`（接口/Schema/翻页）、`hao6v`/`dygang`/`dyg7`/`lou1`（内置）、`generic`（规则 JSON 引擎）、`analyzer`（AutoProfile 本地规则推导）、`health`（模块健康度自检）、`rules/`（内置参考规则）、`rule_store`（data/modules 用户规则）、`registry`（注册表，用户规则覆盖内置） |
 | `src/site/ai_client.py` | AI 助手客户端（OpenAI 兼容 / 本机 Ollama），仅用于生成新站点解析规则；Key 经 DPAPI 加密，结果须过本地校验 |
 | `src/site/mirrors.py` | 镜像可用性探测与发布页发现 |
-| `src/site/service.py` | 站点实例→模块解析→镜像容灾→增量→补抓→落库（可复用/可测试） |
+| `src/site/service.py` | 站点实例→模块解析→镜像容灾→增量→补抓→落库；`search()` 关键词跨站搜索编排 |
+| `src/ui/search_page.py` | 🔍 搜索标签页：关键词 + 站点多选 + 结果表 + 按需抓详情/发送/复制/订阅 |
 | `src/pinyin_search.py` | 关键词 / 拼音首字母检索（依赖 pypinyin，缺失自动降级） |
 | `src/downloader/` | qB/TR/Aria2 三客户端与统一发送管理 |
 | `src/ui/` | 各界面页、拖拽窗、托盘、渐变弹窗、主题、后台任务封装 |
@@ -183,7 +187,8 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 3. **托盘图标变灰后点“发送”还有弹窗？** 已拆分为两个开关：图标变灰仅表示“剪贴板监听”暂停；
    弹窗提示由“弹窗提示”独立控制。
 4. **没有任何右下角弹窗？** 检查托盘“弹窗提示”或设置页“右下角提醒”总开关是否被关闭。
-5. **数据存在哪里？** 绿色版：exe 同级 `data\`；目录不可写时自动回退 `%APPDATA%\6vdown`。
+5. **数据存在哪里？** 绝对绿色：只放 exe 同级的 `data\`（源码运行为项目 `data\`）；
+   程序目录只读时回退到当前工作目录的 `data\`，**不会写 `%APPDATA%` 等系统目录**。
    设置页提供“打开数据目录”按钮直达。
 6. **启动报 Qt DLL 加载失败？** 多为 Anaconda + 新版 PySide6 兼容问题：请用 `.venv-run` 并按
    `requirements.txt` 安装 PySide6 6.6.x（见“运行与打包”）。
@@ -193,6 +198,14 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 ---
 
 ## 版本变更记录
+- **v1.0.1（搜索结果时间倒序 · 绝对绿色 · 交互修正）**：
+  - **搜索结果按时间倒序**：搜索页列表改为“发布日期近的排最上面”，无日期的条目排最后（同日期保持原顺序）。
+  - **站点勾选语义修正**：搜索页「恢复默认」、解析工作台「全不选」原来都等价于“全选”（空选择 = 全部站点），现改为**只选后台默认解析站点**（站点实例里 `is_current` 的站点，未设置时取第一个启用站点）；「全选」仍为全部站点。
+  - **数字输入框禁用鼠标滚轮**：全局拦截 `QAbstractSpinBox` 的 Wheel 事件，上限 / 并发 / 间隔等数字只能用上下箭头或键盘修改，避免鼠标划过误改。
+  - **绝对绿色**：数据目录只跟随程序目录（exe 同级 `data\`，源码运行为项目 `data\`），不再回退 `%APPDATA%`；程序目录只读时退回“当前工作目录的 `data\`”。旧版系统目录数据仅在首次启动时单向迁移读取。
+  - **1LOU 网盘结果补齐**：全站搜索按时间排序会把网盘帖挤出上限，现额外按网盘电影（fid=13）/ 网盘剧集（fid=14）补搜，并把带网盘标记的条目排在最前，自动解析详情优先抓取。
+  - **网盘识别统一**：域名清单、URL 判定、网盘名、提取码补全统一收敛到 `src/site/netdisk.py`（夸克 / 百度 / 阿里 / UC / 天翼 / 迅雷 / 115 / 微云 / 移动 / 123 / 蓝奏等），规则 JSON 不再逐站重复维护；修复“提取码错配到上一条链接”的问题。
+  - **文案更准确**：搜索页资源列的“未解析”改为“待解析”，悬浮提示说明需双击或点“解析全部”才会抓取详情页。
 - **v0.9.0（多站点解析模块化 · 通用规则引擎 · AI 助手）**：
   - **解析模块化**：新增 `src/site/modules/`（接口 + 注册表 + 内置模块），`SiteParseService` 按“站点实例”选用模块；`hao6v`（6v520 模板）行为不变。
   - **多站点同时解析**：解析工作台顶部“🗺 解析站点”按钮可多选本次要抓取的站点（选择写入配置 `enabled_sites`）；一次解析可覆盖多个站点，结果合并展示、增量/补抓/落库按站点独立进行；单个站点失效不影响其它站点。
@@ -206,6 +219,19 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
   - **AI 助手（可配置，可选）**：新增 `ai_client.py`（OpenAI 兼容协议，支持外部 API 如 DeepSeek 与本机 Ollama/LM Studio）+ 设置页「🤖 AI 助手」（开关/提供商/地址/模型/Key，带测试连接）。用途 = 给新站点生成解析规则：页面样本去噪截断后发送，返回严格 JSON，**必须经本地双重把关**（结构校验 + 实测解析 ≥3 条）才可采用，否则自动降级本地推导；API Key 走 DPAPI 加密存本机。
   - **新模块向导与模块健康度**：新增 `ui/analyze_dialog.py`（输入 URL → 本地/AI 推导 → 规则 JSON 可编辑 → 试解析预览前 12 条 → 保存即创建解析站点）；新增 `modules/health.py` 记录每模块最近条目数与资源命中率，连续 0 条/命中率过低在设置页「🧩 自定义模块与健康度」黄字提示“可能已改版”，可一键重新分析。
   - **多站点数据模型**：`site_instances` 表（模块、入口、启用、当前站点）、`parse_records/subscriptions` 增加 `site_key` 列；旧库打开自动迁移。
+- **v0.10.0（关键词跨站搜索）**：
+  - **🔍 搜索标签页**：新增“搜索”页（关键词回车即搜 + 站点多选 + 结果上限 + 仅显示有磁力筛选），结果按站点分组展示，可直接“解析详情 → 发送/复制/订阅”。
+  - **模块搜索接口**：`SiteModule` 新增 `supports_search` / `search_spec()` / `parse_search()`，基类统一处理分页抓取、礼貌延时、取消与跨页去重；模块只需给出“搜索请求描述 + 结果解析”。
+  - **四站站内搜索**：`hao6v`/`dygang`/`dyg7` 走 EmpireCMS 通用 `POST /e/search/index.php`（gb2312/utf-8 显式解码），`lou1` 走 Xiuno 前端实际调用的 JSON 接口 `GET /search/api/search.php?q=&fid=0&page=`（结果页是 SPA，非 HTML）。
+  - **抓取器增强**：`SiteFetcher` 新增 `post()`（表单按站点编码 urlencode、可带 Referer），`get()`/`post()` 支持显式 `encoding`，并接上此前预留但无人读取的 `meta.encoding`。
+  - **规则引擎扩展**：规则 JSON 支持可选 `search` 段（`url` 支持 `{keyword}` / `{keyword_enc}` / `{page}` 占位符、`method`、`params`、`encoding`、`referer`、`max_pages`，结果结构可用 `result` 覆盖主 `extract`）；`validate_rule` 同步校验。
+  - **搜索历史**：新增 `search_history` 表记录关键词/站点/命中数（上限可配，可一键清空），并在输入框提示最近搜索。
+  - **修复**：订阅检查里调用的 `fetcher.fetch_detail`（该方法并不存在，会抛异常）改为统一的按需抓详情实现。
+  - **修复**：`SiteFetcher.post()` 手动把表单编码成 bytes 后未补 `Content-Type`，requests 不再自动添加该头，PHP 因此不解析 `$_POST`，搜索关键字为空（表现为站点返回“没有搜索到相关的内容”，并与“搜索时间间隔 10 秒”提示叠加，容易被误判为反爬）。
+  - **节流防护**：站点（帝国 CMS）对同一 IP 的搜索有最小间隔限制，搜索改为**跨站串行** + 请求前补齐间隔 + 被限流自动退避重试 + 短期结果缓存 + 明确提示。
+  - **网盘解析**：支持正文里的纯文本网盘地址（不限于 `<a>` 链接），覆盖夸克 / 百度网盘 / 阿里云盘（含 `www.aliyundrive.com`）/ UC / 天翼 / 迅雷 / 115 / 微云；URL 未带 `?pwd=` 时自动从正文“提取码：xxxx”补齐；正文范围按嵌套 `<div>` 配对截取，避免把页脚/导航外链误收为资源。
+  - **资源状态**：资源列区分 `磁力N·种子N·网盘N` / `无资源`（已解析但确实没有）/ `失败`（超时或请求异常）/ `未解析`；详情抓取超时放宽到 25s 并自动重试一次；新增「解析全部」与双击单行解析。
+  - **图标**：窗口与任务栏图标始终保持正常蓝色，仅**托盘图标**在“禁用”时灰显。
   - **解码增强**：页面“声明 gb2312 实际输出 UTF-8”的 CDN 节点现在能正确解码（干净的 UTF-8 优先）。
 - **v0.8.0（影视订阅与自动追剧重大升级）**：
   - **追剧订阅管理**：新增「📺 我的订阅」独立工作台面板；解析工作台与磁力详情框均支持「订阅此剧」一键纳入追剧更新池。

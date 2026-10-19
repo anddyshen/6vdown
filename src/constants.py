@@ -18,14 +18,21 @@ def project_root() -> str:
 
 
 def app_data_dir() -> str:
-    """数据目录（绿色模式）：数据跟随程序所在目录。
+    """数据目录（绝对绿色）：只跟随程序所在目录，不写系统目录。
 
-    - exe：与 6vdown.exe 同级的 data\\ 目录（拷贝整个目录即便携迁移）；
-    - 若 exe 所在目录不可写（如 Program Files），回退 %APPDATA%\\6vdown；
-    - 源码运行：项目 data\\ 目录。
+    - exe：与 6vdown.exe 同级的 data\\ 目录（整个目录拷走即迁移）；
+    - 源码运行：项目根目录的 data\\；
+    - 万一程序目录不可写（只读介质/U 盘保护），回退到“当前工作目录”的
+      data\\，仍不写 %APPDATA% 等系统目录。
     """
+    candidates = []
     if is_frozen():
-        base = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "data")
+        candidates.append(os.path.join(
+            os.path.dirname(os.path.abspath(sys.executable)), "data"))
+    else:
+        candidates.append(os.path.join(project_root(), "data"))
+    candidates.append(os.path.join(os.getcwd(), "data"))
+    for base in candidates:
         try:
             os.makedirs(base, exist_ok=True)
             probe = os.path.join(base, ".write_test")
@@ -34,19 +41,20 @@ def app_data_dir() -> str:
             os.remove(probe)
             return base
         except Exception:
-            pass
-        ap = os.environ.get("APPDATA") or os.path.expanduser("~")
-        base = os.path.join(ap, "6vdown")
-    else:
-        base = os.path.join(project_root(), "data")
-    os.makedirs(base, exist_ok=True)
-    return base
+            continue
+    # 全部不可写时仍返回首个候选，交由上层报错，绝不静默写系统目录
+    return candidates[0]
+
+
+def legacy_data_dirs() -> list:
+    """旧版放在系统目录的数据位置（仅供首次启动单向迁移读取）。"""
+    ap = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return [os.path.join(ap, "C2Down"), os.path.join(ap, "6vdown")]
 
 
 def legacy_data_dir() -> str:
-    """旧版（%APPDATA%）数据目录，用于首次启动自动迁移。"""
-    ap = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(ap, "C2Down")  # legacy old-version dir
+    """兼容旧接口：返回第一个历史数据目录。"""
+    return legacy_data_dirs()[0]
 
 
 def db_path() -> str:
