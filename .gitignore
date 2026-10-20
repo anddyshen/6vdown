@@ -1,25 +1,53 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
 .venv/
+/.venv-run/
+/.venv-*/
 
-# 运行数据（首次运行时生成）
+# 运行与测试数据（绝对禁止提交，严格保护用户隐私与本地配置）
 data/
+data*/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.lock
+*.log
+*.log.*
 
-# 打包产物
+# 本地配置文件与敏感凭据（禁止任何环境密钥泄漏）
+config.json
+*.json.bak
+.env
+.env.*
+*.env
+
+# 打包与构建产物
 build/
 dist/
 *.spec
+*.egg-info/
 
-# 图标缓存
+# 图标缓存与临时文件
 assets/*.ico
 assets/*.png
+.pytest_cache/
+.coverage
+htmlcov/
+temp/
+tmp/
 
-# 编辑器
+# 编辑器与系统文件
 .vscode/
 .idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
 
-# 本地虚拟环境（禁止提交，含 Qt 大文件）
-/.venv-run/
-/.venv-*/
