@@ -24,3 +24,4 @@ EXPOSE 8080
 
 # 默认启动命令
 ENTRYPOINT ["python", "server.py", "--host", "0.0.0.0", "--port", "8080"]
+

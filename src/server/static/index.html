@@ -182,7 +182,7 @@
                 </td>
                 <td class="py-3 px-3 text-slate-600 font-medium">{{ sub.last_ep || '等待首检' }}</td>
                 <td class="py-3 px-3 text-slate-500 text-xs">
-                  <span v-if="sub.emby_series_id" class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">ID: {{ sub.emby_series_id }}</span>
+                  <span v-if="sub.emby_series_id" class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-mono">ID: {{ sub.emby_series_id }}</span>
                   <span v-else class="text-slate-400">未绑定/自动探测</span>
                 </td>
                 <td class="py-3 px-4 text-right space-x-2">
@@ -241,37 +241,38 @@
 
       <!-- ------------------------------------------------ 设置面板 ------------------------------------------------ -->
       <section v-if="tab === 'settings'" class="space-y-6">
-        <!-- 下载主机管理 -->
+        <!-- 1. 下载主机管理 -->
         <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
           <div class="flex justify-between items-center">
             <div>
               <h3 class="font-bold text-slate-800">下载器配置 (qBittorrent / Transmission / Aria2)</h3>
               <p class="text-xs text-slate-500">发送磁力链接与种子的目标下载服务器。</p>
             </div>
-            <button @click="openAddHost = true" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-3 py-1.5 rounded-lg font-bold transition">＋ 添加下载主机</button>
+            <button @click="openCreateHost" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-bold transition shadow">＋ 添加下载主机</button>
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div v-for="h in hosts" :key="h.id" class="border rounded-lg p-3 flex justify-between items-center" :class="h.is_active ? 'border-indigo-500 bg-indigo-50/30' : 'border-slate-200'">
+            <div v-for="h in hosts" :key="h.id" class="border rounded-lg p-3 flex justify-between items-center" :class="h.is_active ? 'border-indigo-500 bg-indigo-50/40' : 'border-slate-200'">
               <div class="space-y-0.5">
                 <div class="flex items-center space-x-2">
                   <span class="font-bold text-sm text-slate-800">{{ h.name }}</span>
                   <span class="text-xs uppercase px-1.5 py-0.2 rounded font-semibold bg-slate-200 text-slate-700">{{ h.type }}</span>
-                  <span v-if="h.is_active" class="text-xs bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">激活使用中</span>
+                  <span v-if="h.is_active" class="text-xs bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">激活中</span>
                 </div>
-                <div class="text-xs text-slate-500">{{ h.address }}:{{ h.port }}</div>
+                <div class="text-xs text-slate-500">{{ h.address }}:{{ h.port }} (用户: {{ h.username || '无' }})</div>
               </div>
-              <div class="space-x-1">
-                <button @click="testHost(h)" class="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded">测试</button>
-                <button v-if="!h.is_active" @click="activateHost(h)" class="text-xs bg-indigo-600 text-white px-2 py-1 rounded">激活</button>
-                <button @click="deleteHost(h)" class="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded">删除</button>
+              <div class="space-x-1 shrink-0">
+                <button @click="testHostDirect(h)" class="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded transition">测试</button>
+                <button @click="openEditHost(h)" class="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded transition">编辑</button>
+                <button v-if="!h.is_active" @click="activateHost(h)" class="text-xs bg-indigo-600 text-white px-2 py-1 rounded transition">激活</button>
+                <button @click="deleteHost(h)" class="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded transition">删除</button>
               </div>
             </div>
             <div v-if="!hosts.length" class="text-xs text-slate-400 col-span-2 py-4 text-center">暂未配置下载主机，请点击右上角添加。</div>
           </div>
         </div>
 
-        <!-- Emby 媒体库联动 -->
+        <!-- 2. Emby 媒体库联动 -->
         <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
           <div class="flex justify-between items-center">
             <div>
@@ -301,25 +302,115 @@
           </div>
         </div>
 
-        <!-- 追剧自动化规则 -->
+        <!-- 3. 追剧自动化与画质优先级 -->
         <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
-          <h3 class="font-bold text-slate-800">自动化与追剧首选项</h3>
+          <h3 class="font-bold text-slate-800">追剧自动化与画质偏好</h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <label class="flex items-center space-x-2">
               <input type="checkbox" v-model="config.sub_scheduler_enabled" class="rounded text-indigo-600" />
-              <span>开启周期性后台自动检查</span>
+              <span>开启周期性后台自动检查（无人值守后台巡检）</span>
             </label>
             <label class="flex items-center space-x-2">
               <input type="checkbox" v-model="config.sub_auto_direct_download" class="rounded text-indigo-600" />
-              <span>发现新集数后直接自动推送到下载器（无人值守追剧）</span>
+              <span>发现新集数后直接自动推送到下载器（无需二次人工确认）</span>
+            </label>
+            <label class="flex items-center space-x-2">
+              <input type="checkbox" v-model="config.sub_auto_on_startup" class="rounded text-indigo-600" />
+              <span>服务启动时自动检查一次所有订阅</span>
             </label>
             <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1">检查周期（小时）</label>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">后台巡检周期（小时）</label>
               <input v-model.number="config.sub_interval_hours" type="number" min="1" max="24" class="w-32 bg-slate-100 border border-slate-300 rounded-lg px-3 py-1 text-sm" />
             </div>
           </div>
-          <div class="text-right">
+
+          <div class="pt-2 border-t">
+            <label class="block text-xs font-semibold text-slate-600 mb-2">下载画质优先级（排在前面的格式优先推送）</label>
+            <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+              <div v-for="(q, idx) in qualityList" :key="q" class="bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-bold flex items-center space-x-1">
+                <span>{{ q }}</span>
+                <div class="space-x-0.5 ml-1">
+                  <button v-if="idx > 0" @click="moveQuality(idx, -1)" class="text-indigo-600 hover:text-indigo-900 px-0.5">▲</button>
+                  <button v-if="idx < qualityList.length - 1" @click="moveQuality(idx, 1)" class="text-indigo-600 hover:text-indigo-900 px-0.5">▼</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-right pt-2">
             <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow">保存配置</button>
+          </div>
+        </div>
+
+        <!-- 4. 抓取与并发参数配置 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <h3 class="font-bold text-slate-800">站点抓取与性能参数</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">详情页并发抓取线程数 (1~8)</label>
+              <input v-model.number="config.detail_concurrency" type="number" min="1" max="8" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+              <p class="text-[11px] text-slate-400 mt-1">1 为单线程礼貌式抓取；建议设置为 2~3。</p>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">详情页抓取间隔延时（秒）</label>
+              <input v-model.number="config.polite_delay" type="number" step="0.1" min="0" max="5" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+              <p class="text-[11px] text-slate-400 mt-1">每次请求详情页之间的礼貌缓冲时间。</p>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">抓取详情页磁力链接</label>
+              <label class="flex items-center space-x-2 mt-2">
+                <input type="checkbox" v-model="config.fetch_detail" class="rounded text-indigo-600" />
+                <span class="text-xs">开启（关闭则仅抓取首页标题列表）</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t">
+            <label class="block text-xs font-semibold text-slate-600 mb-2">参与抓取的资源分区区块</label>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+              <label v-for="b in availableBlocks" :key="b" class="flex items-center space-x-1.5 text-xs bg-slate-50 border p-2 rounded cursor-pointer hover:bg-slate-100">
+                <input type="checkbox" :value="b" v-model="config.enabled_blocks" class="rounded text-indigo-600" />
+                <span>{{ b }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="text-right pt-2">
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow">保存配置</button>
+          </div>
+        </div>
+
+        <!-- 5. 跨站搜索参数配置 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <h3 class="font-bold text-slate-800">跨站搜索参数</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">每站最大翻页数 (1~5)</label>
+              <input v-model.number="config.search_max_pages" type="number" min="1" max="5" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">每站结果条数上限 (20~200)</label>
+              <input v-model.number="config.search_limit" type="number" min="20" max="200" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">搜索并发站点数 (1~4)</label>
+              <input v-model.number="config.search_concurrency" type="number" min="1" max="4" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm" />
+            </div>
+          </div>
+          <div class="text-right pt-2">
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow">保存配置</button>
+          </div>
+        </div>
+
+        <!-- 6. 数据与缓存维护 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-3">
+          <h3 class="font-bold text-slate-800">数据与缓存维护</h3>
+          <p class="text-xs text-slate-500">当前数据持久化目录：<code class="font-mono bg-slate-100 px-1 py-0.5 rounded">{{ dataDir }}</code></p>
+          <div class="flex items-center space-x-3 pt-1">
+            <button @click="resetCache" class="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs px-3 py-1.5 rounded-lg font-bold transition">
+              🗑️ 重置抓取缓存数据
+            </button>
+            <span class="text-xs text-slate-400">重置后下次解析将全量重新拉取，不会影响您的订阅清单和下载历史。</span>
           </div>
         </div>
       </section>
@@ -354,6 +445,66 @@
         </div>
       </div>
     </div>
+
+    <!-- ------------------------------------------------ 弹窗：添加 / 编辑下载主机 ------------------------------------------------ -->
+    <div v-if="hostModal.show" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-5 space-y-4">
+        <div class="flex justify-between items-start border-b pb-3">
+          <h3 class="font-bold text-slate-800 text-base">{{ hostModal.isEdit ? '编辑下载主机' : '添加下载主机' }}</h3>
+          <button @click="hostModal.show = false" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+        </div>
+
+        <div class="space-y-3 text-sm">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">下载器类型</label>
+            <select v-model="hostModal.form.type" @change="onHostTypeChange" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="qb">qBittorrent (默认端口 8080)</option>
+              <option value="tr">Transmission (默认端口 9091)</option>
+              <option value="ar">Aria2 (默认端口 6800)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">主机名称 / 别名</label>
+            <input v-model="hostModal.form.name" type="text" placeholder="例如：客厅 NAS / 主力机 qB" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div class="grid grid-cols-3 gap-2">
+            <div class="col-span-2">
+              <label class="block text-xs font-semibold text-slate-600 mb-1">IP 或主机名</label>
+              <input v-model="hostModal.form.address" type="text" placeholder="192.168.1.10" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">端口</label>
+              <input v-model.number="hostModal.form.port" type="number" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">用户名 / RPC Secret</label>
+            <input v-model="hostModal.form.username" type="text" placeholder="qB/TR 用户名；Aria2 填 Secret" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">密码</label>
+            <input v-model="hostModal.form.password" type="password" :placeholder="hostModal.isEdit ? '留空则保持原有保存密码不变' : '输入访问密码'" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <label class="flex items-center space-x-2 cursor-pointer pt-1">
+            <input type="checkbox" v-model="hostModal.form.is_active" class="rounded text-indigo-600" />
+            <span class="text-xs font-medium">设为当前默认激活主机</span>
+          </label>
+          <div v-if="hostModal.testMsg" :class="hostModal.testOk ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-rose-700 bg-rose-50 border-rose-200'" class="p-2 border rounded text-xs font-mono">
+            {{ hostModal.testMsg }}
+          </div>
+        </div>
+
+        <div class="flex justify-between items-center pt-3 border-t">
+          <button @click="testModalHost" :disabled="hostModal.testing" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition">
+            {{ hostModal.testing ? '测试中...' : '测试连接' }}
+          </button>
+          <div class="space-x-2">
+            <button @click="hostModal.show = false" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold">取消</button>
+            <button @click="saveModalHost" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow">保存主机</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -376,7 +527,22 @@
         const searchResults = ref([]);
         const config = ref({});
         const hosts = ref([]);
-        const openAddHost = ref(false);
+        const availableBlocks = ref([]);
+        const dataDir = ref('');
+
+        const qualityList = computed(() => {
+          return config.value.quality_priority || ['1080P', '4K', '720P', 'OTHER'];
+        });
+
+        function moveQuality(idx, dir) {
+          const arr = [...qualityList.value];
+          const target = idx + dir;
+          if (target < 0 || target >= arr.length) return;
+          const temp = arr[idx];
+          arr[idx] = arr[target];
+          arr[target] = temp;
+          config.value.quality_priority = arr;
+        }
 
         const notice = ref({ show: false, text: '', isError: false });
         function showMsg(text, isError = false) {
@@ -385,6 +551,117 @@
         }
 
         const detailModal = ref({ show: false, title: '', magnets: [], loading: false });
+
+        // 下载主机弹窗
+        const hostModal = ref({
+          show: false,
+          isEdit: false,
+          testing: false,
+          testMsg: '',
+          testOk: false,
+          form: { id: null, type: 'qb', name: '', address: '', port: 8080, username: '', password: '', is_active: false }
+        });
+
+        function openCreateHost() {
+          hostModal.value = {
+            show: true,
+            isEdit: false,
+            testing: false,
+            testMsg: '',
+            testOk: false,
+            form: { id: null, type: 'qb', name: '', address: '', port: 8080, username: '', password: '', is_active: hosts.value.length === 0 }
+          };
+        }
+
+        function openEditHost(h) {
+          hostModal.value = {
+            show: true,
+            isEdit: true,
+            testing: false,
+            testMsg: '',
+            testOk: false,
+            form: { id: h.id, type: h.type, name: h.name, address: h.address, port: h.port, username: h.username, password: '', is_active: h.is_active }
+          };
+        }
+
+        function onHostTypeChange() {
+          if (!hostModal.value.form.port || [8080, 9091, 6800].includes(hostModal.value.form.port)) {
+            if (hostModal.value.form.type === 'qb') hostModal.value.form.port = 8080;
+            else if (hostModal.value.form.type === 'tr') hostModal.value.form.port = 9091;
+            else if (hostModal.value.form.type === 'ar') hostModal.value.form.port = 6800;
+          }
+        }
+
+        async function testModalHost() {
+          hostModal.value.testing = true;
+          hostModal.value.testMsg = '';
+          try {
+            const res = await fetch('/api/settings/host_test', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(hostModal.value.form)
+            }).then(r => r.json());
+            hostModal.value.testOk = res.ok;
+            hostModal.value.testMsg = res.message;
+          } catch (e) {
+            hostModal.value.testOk = false;
+            hostModal.value.testMsg = '连接请求失败: ' + e;
+          } finally {
+            hostModal.value.testing = false;
+          }
+        }
+
+        async function saveModalHost() {
+          if (!hostModal.value.form.name.trim() || !hostModal.value.form.address.trim()) {
+            showMsg('请填写主机名称与地址', true);
+            return;
+          }
+          await fetch('/api/settings/host', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(hostModal.value.form)
+          });
+          showMsg(hostModal.value.isEdit ? '主机已更新！' : '主机添加成功！');
+          hostModal.value.show = false;
+          loadSettings();
+        }
+
+        async function testHostDirect(h) {
+          try {
+            const res = await fetch('/api/settings/host_test', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: h.id, type: h.type, name: h.name, address: h.address, port: h.port, username: h.username })
+            }).then(r => r.json());
+            showMsg(`[${h.name}] ` + res.message, !res.ok);
+          } catch (e) {
+            showMsg(`[${h.name}] 测试失败: ` + e, true);
+          }
+        }
+
+        async function activateHost(h) {
+          await fetch('/api/settings/host_activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: h.id })
+          });
+          showMsg(`已切换当前默认主机为: ${h.name}`);
+          loadSettings();
+        }
+
+        async function deleteHost(h) {
+          if (!confirm(`确认删除下载主机 ${h.name}？`)) return;
+          await fetch(`/api/settings/host/${h.id}`, { method: 'DELETE' });
+          showMsg('已删除主机');
+          loadSettings();
+        }
+
+        async function resetCache() {
+          if (!confirm('确认清空抓取缓存？下次解析将重新全量拉取。')) return;
+          await fetch('/api/settings/reset_cache', { method: 'POST' });
+          showMsg('抓取缓存已清空！');
+          loadWorkbench();
+        }
 
         function tabClass(t) {
           return tab.value === t ? 'bg-indigo-700 text-white shadow' : 'text-indigo-100 hover:bg-indigo-500 hover:text-white';
@@ -545,6 +822,8 @@
           const res = await fetch('/api/settings').then(r => r.json());
           config.value = res.config || {};
           hosts.value = res.hosts || [];
+          availableBlocks.value = res.available_blocks || [];
+          dataDir.value = res.data_dir || '';
         }
 
         async function saveConfig() {
@@ -565,32 +844,6 @@
           showMsg(res.message, !res.ok);
         }
 
-        async function testHost(h) {
-          const res = await fetch('/api/settings/host_test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(h)
-          }).then(r => r.json());
-          showMsg(res.message, !res.ok);
-        }
-
-        async function activateHost(h) {
-          h.is_active = true;
-          await fetch('/api/settings/host', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(h)
-          });
-          loadSettings();
-          showMsg(`已激活 ${h.name}`);
-        }
-
-        async function deleteHost(h) {
-          if (!confirm(`确认删除下载主机 ${h.name}？`)) return;
-          await fetch(`/api/settings/host/${h.id}`, { method: 'DELETE' });
-          loadSettings();
-        }
-
         function copyText(txt) {
           navigator.clipboard.writeText(txt);
           showMsg('链接已复制到剪贴板！');
@@ -609,12 +862,13 @@
           openItemDetail, quickSubscribe, subs, subUpdates, checkingSubs,
           checkSub, checkAllSubs, deleteSub, downloadMagnet, downloadAllMissing,
           searchKeyword, searching, searchResults, doSearch, config, hosts,
-          openAddHost, saveConfig, testEmby, testHost, activateHost, deleteHost,
-          detailModal, copyText, notice
+          availableBlocks, dataDir, qualityList, moveQuality, saveConfig,
+          testEmby, testHostDirect, activateHost, deleteHost, resetCache,
+          detailModal, hostModal, openCreateHost, openEditHost, onHostTypeChange,
+          testModalHost, saveModalHost, copyText, notice
         };
       }
     }).mount('#app');
   </script>
 </body>
 </html>
-

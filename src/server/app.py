@@ -152,9 +152,12 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------ 系统设置
     @app.get("/api/settings")
     def get_settings():
+        from ..constants import DEFAULT_ENABLED_BLOCKS, app_data_dir
         return {
             "config": service.get_config(),
             "hosts": service.list_hosts(),
+            "available_blocks": DEFAULT_ENABLED_BLOCKS,
+            "data_dir": app_data_dir(),
         }
 
     @app.post("/api/settings/config")
@@ -170,6 +173,13 @@ def create_app() -> FastAPI:
         host_id = service.save_host(payload)
         return {"ok": True, "host_id": host_id}
 
+    @app.post("/api/settings/host_activate")
+    def activate_host(payload: dict):
+        host_id = payload.get("id")
+        if not host_id:
+            raise HTTPException(400, "缺少 host_id")
+        return {"ok": service.activate_host(int(host_id))}
+
     @app.delete("/api/settings/host/{host_id}")
     def delete_host(host_id: int):
         return {"ok": service.delete_host(host_id)}
@@ -177,6 +187,10 @@ def create_app() -> FastAPI:
     @app.post("/api/settings/host_test")
     def test_host(payload: dict):
         return service.test_host(payload)
+
+    @app.post("/api/settings/reset_cache")
+    def reset_cache():
+        return {"ok": service.reset_cache()}
 
     # ------------------------------------------------------------ 前端静态页面
     STATIC_DIR.mkdir(parents=True, exist_ok=True)

@@ -445,35 +445,71 @@ class ServerService:
                 "port": h.port,
                 "username": h.username,
                 "is_active": h.is_active,
+                "has_password": bool(h.password),
             }
             for h in hosts
         ]
 
     def save_host(self, host_data: dict) -> int:
+        host_id = host_data.get("id")
+        password = str(host_data.get("password") or "").strip()
+        # 如果未传入新密码，但有 host_id，保留已有密码
+        if not password and host_id:
+            existing = [h for h in self.db.list_hosts() if h.id == int(host_id)]
+            if existing:
+                password = existing[0].password
+
         h = DownloadHost(
-            id=host_data.get("id"),
+            id=int(host_id) if host_id else None,
             type=host_data.get("type", "qb"),
             name=host_data.get("name", ""),
             address=host_data.get("address", ""),
             port=int(host_data.get("port", 8080) or 8080),
             username=host_data.get("username", ""),
-            password=host_data.get("password", ""),
+            password=password,
             is_active=bool(host_data.get("is_active", False)),
         )
-        return self.db.save_host(h)
+        if h.id:
+            self.db.update_host(h)
+            if h.is_active:
+                self.db.set_active_host(h.id)
+            return h.id
+        else:
+            new_id = self.db.add_host(h)
+            if h.is_active:
+                self.db.set_active_host(new_id)
+            return new_id
+
+    def activate_host(self, host_id: int) -> bool:
+        self.db.set_active_host(host_id)
+        return True
 
     def delete_host(self, host_id: int) -> bool:
         self.db.delete_host(host_id)
         return True
 
     def test_host(self, host_data: dict) -> dict:
+        host_id = host_data.get("id")
+        password = str(host_data.get("password") or "").strip()
+        # 如果未传入新密码，但传入了已有 host_id，使用数据库内保存的密码测试
+        if not password and host_id:
+            existing = [h for h in self.db.list_hosts() if h.id == int(host_id)]
+            if existing:
+                password = existing[0].password
+
         h = DownloadHost(
+            id=int(host_id) if host_id else None,
             type=host_data.get("type", "qb"),
             name=host_data.get("name", ""),
             address=host_data.get("address", ""),
             port=int(host_data.get("port", 8080) or 8080),
             username=host_data.get("username", ""),
-            password=host_data.get("password", ""),
+            password=password,
         )
         res = self.downloader.test_host(h)
         return {"ok": res.ok, "message": res.message}
+
+    def reset_cache(self) -> bool:
+        """清空抓取缓存数据。"""
+        self.db.clear_parse_data()
+        return True
