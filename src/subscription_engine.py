@@ -203,6 +203,8 @@ def analyze_subscription_updates(
 
     # 站点当前发布的最新一集的标签名（排在最上面的第一组）
     site_latest_ep_label = ordered[0][0]
+    sub_s, sub_e = _ep_meta(sub.title)
+    target_season = sub_s if sub_s is not None else _ep_meta(sub.last_ep or "")[0]
 
     latest_candidate: Optional[dict] = None
     missing_history: list[dict] = []
@@ -211,6 +213,10 @@ def analyze_subscription_updates(
     for ep_label, m_list in ordered:
         s, e = _ep_meta(ep_label)
         season_num = s if s is not None else 1
+
+        # 若订阅明确指定了目标季（如《人生复本》第二季08），忽略更早的历史旧季（如第一季的旧资源）
+        if target_season is not None and s is not None and s < target_season:
+            continue
 
         # 仅考虑可下载类型（磁力/种子附件）
         sendable = [m for m in m_list

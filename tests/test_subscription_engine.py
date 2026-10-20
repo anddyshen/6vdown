@@ -123,6 +123,42 @@ class TestSubscriptionEngine(unittest.TestCase):
 
         self.assertIsNone(up)
 
+    def test_target_season_ignores_older_seasons(self):
+        """当订阅明确为第二季时，网页中保留的第一季历史链接不应被当作第二季缺失剧集。"""
+        sub_s2 = Subscription(id=2, title="美剧《人生复本》第二季08", detail_url="https://test/dm.html")
+        magnets = [
+            MagnetLink(label="人生复本.S02E08.1080p.mp4", url="magnet:?xt=urn:btih:s02e08"),
+            MagnetLink(label="人生复本.S02E07.1080p.mp4", url="magnet:?xt=urn:btih:s02e07"),
+            MagnetLink(label="人生复本.S01E09.1080p.mp4", url="magnet:?xt=urn:btih:s01e09"),
+            MagnetLink(label="人生复本.S01E08.1080p.mp4", url="magnet:?xt=urn:btih:s01e08"),
+        ]
+        item = ParseItem(title="美剧《人生复本》第二季08", detail_url=sub_s2.detail_url, magnets=magnets)
+
+        # Emby 中第二季 7、8 集都已存在，但没有第一季
+        emby_inventory = {(2, 7), (2, 8)}
+
+        up = analyze_subscription_updates(
+            sub=sub_s2,
+            item=item,
+            is_magnet_pushed_fn=lambda sid, u: False,
+            is_ep_pushed_fn=lambda sid, lbl: False,
+            priority_order=["1080P", "4K", "720P", "OTHER"],
+            emby_existing=emby_inventory,
+        )
+        # 第二季已全满，不应提示更新，更不应把第一季归为缺失
+        self.assertIsNone(up)
+
+    def test_clean_series_name(self):
+        """测试从各类复杂影视标题中精准提取剧名。"""
+        from src.emby_client import clean_series_name
+
+        self.assertIn("人生复本", clean_series_name("美剧《人生复本》第二季08"))
+        self.assertIn("女警出更", clean_series_name("《女警出更》第二季04"))
+        self.assertIn("星际迷航：奇异新世界", clean_series_name("美剧《星际迷航：奇异新世界》第四季07"))
+        self.assertIn("狂飙", clean_series_name("国剧《狂飙》全39集"))
+        self.assertIn("葬送的芙莉莲", clean_series_name("【动漫】《葬送的芙莉莲》第28集"))
+        self.assertIn("曼达洛人", clean_series_name("美剧《曼达洛人 第一季》08"))
+
 
 if __name__ == "__main__":
     unittest.main()

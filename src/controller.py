@@ -638,6 +638,27 @@ class Controller(QObject):
         """在弹窗中打开订阅剧集的全部磁力与分集详情。"""
         self.open_magnet_dialog(item)
 
+    def _get_emby_existing_for_sub(
+        self, emby_cli: Optional[EmbyClient], sub: Subscription
+    ) -> Optional[set[tuple[int, int]]]:
+        """获取某部订阅在 Emby 库中已拥有的 (季, 集) 集合，自动匹配并持久化 emby_series_id。"""
+        if not emby_cli or not emby_cli.is_configured():
+            return None
+        series_id = getattr(sub, "emby_series_id", "") or ""
+        if series_id:
+            eps = emby_cli.get_series_episodes_by_id(series_id)
+            if eps is not None:
+                return eps
+        # 尝试通过剧名多策略识别并绑定 Emby 剧集 ID
+        s_item = emby_cli.find_series(sub.title)
+        if s_item:
+            matched_id = str(s_item.get("Id", "")).strip()
+            if matched_id:
+                sub.emby_series_id = matched_id
+                self.db.update_subscription(sub)
+                return emby_cli.get_series_episodes_by_id(matched_id)
+        return None
+
     def check_single_subscription(self, sub: Subscription) -> None:
         """单条检查某部订阅剧集的更新。"""
         item = ParseItem(title=sub.title or "", detail_url=sub.detail_url or "")
@@ -654,9 +675,7 @@ class Controller(QObject):
         emby_cli = None
         if self.cfg.get("emby_enabled"):
             emby_cli = EmbyClient(self.cfg.get("emby_server_url", ""), self.cfg.get("emby_api_key", ""))
-        emby_existing = None
-        if emby_cli and emby_cli.is_configured():
-            emby_existing = emby_cli.find_series_episodes(sub.title)
+        emby_existing = self._get_emby_existing_for_sub(emby_cli, sub)
 
         priority = self.cfg.get("quality_priority", ["1080P", "4K", "720P", "OTHER"])
         up = analyze_subscription_updates(
@@ -707,9 +726,7 @@ class Controller(QObject):
                 self.db.update_subscription(sub)
 
             # 查询 Emby 本地已入库剧集
-            emby_existing = None
-            if emby_cli and emby_cli.is_configured():
-                emby_existing = emby_cli.find_series_episodes(sub.title)
+            emby_existing = self._get_emby_existing_for_sub(emby_cli, sub)
 
             # 深入分析最新集与历史漏集
             up = analyze_subscription_updates(
