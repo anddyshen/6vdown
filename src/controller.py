@@ -23,7 +23,11 @@ from .site import mirrors as mirror_mod
 from .site.modules import get_module
 from .site.fetcher import SiteFetcher
 from .site.service import SiteParseService
-from .subscription_engine import filter_subscription_updates
+from .subscription_engine import (
+    SubscriptionUpdate,
+    analyze_subscription_updates,
+    filter_subscription_updates,
+)
 from .ui import theme as theme_mod
 from .ui.drop_window import DropWindow
 from .ui.history_page import HistoryPage
@@ -610,16 +614,72 @@ class Controller(QObject):
             self.act_notify.blockSignals(False)
 
     def subscribe_item(self, item) -> None:
-        """从工作台或详情页订阅某部剧。"""
+        """从工作台、搜索页或详情页订阅某部剧。"""
+        site_key = getattr(item, "site_key", "")
+        if not site_key and self.db is not None:
+            cur = self.db.current_site()
+            site_key = getattr(cur, "module_id", "") if cur else ""
+
         sub = Subscription(
             title=item.title,
             detail_url=item.detail_url,
             status="active",
             last_ep=item.title,
+            site_key=site_key,
         )
         self.db.add_subscription(sub)
         self.sub_page.reload()
         self.notify_ok("已加入追剧订阅", f"《{item.title}》已纳入自动更新检查清单。")
+
+    def copy_to_clipboard(self, text: str) -> None:
+        self.copy_link(text)
+
+    def open_subscription_detail(self, item: ParseItem) -> None:
+        """在弹窗中打开订阅剧集的全部磁力与分集详情。"""
+        self.open_magnet_dialog(item)
+
+    def check_single_subscription(self, sub: Subscription) -> None:
+        """单条检查某部订阅剧集的更新。"""
+        item = ParseItem(title=sub.title or "", detail_url=sub.detail_url or "")
+        module_id = getattr(sub, "site_key", "") or ""
+        if not self.fetch_item_detail(item, module_id=module_id):
+            self.notify_fail("检查失败", f"无法拉取《{sub.title}》的详情页，请检查网络或站点镜像。")
+            return
+
+        if item.title and item.title != sub.last_ep:
+            sub.last_ep = item.title
+            self.db.update_subscription(sub)
+            self.sub_page.reload()
+
+        emby_cli = None
+        if self.cfg.get("emby_enabled"):
+            emby_cli = EmbyClient(self.cfg.get("emby_server_url", ""), self.cfg.get("emby_api_key", ""))
+        emby_existing = None
+        if emby_cli and emby_cli.is_configured():
+            emby_existing = emby_cli.find_series_episodes(sub.title)
+
+        priority = self.cfg.get("quality_priority", ["1080P", "4K", "720P", "OTHER"])
+        up = analyze_subscription_updates(
+            sub=sub,
+            item=item,
+            is_magnet_pushed_fn=self.db.is_magnet_pushed,
+            is_ep_pushed_fn=self.db.is_episode_pushed,
+            priority_order=priority,
+            emby_existing=emby_existing,
+        )
+
+        if not up or not up.has_any_update:
+            self.notify_tip(f"《{sub.title}》已是最新", f"最新进度：{sub.last_ep or '已最新'}，暂无新剧集需要下载。")
+            return
+
+        # 弹出单部剧集的更新卡片确认
+        dlg = SubscriptionConfirmDialog(
+            [up],
+            on_confirm=self._push_subscription_tasks,
+            on_open_detail=self.open_subscription_detail,
+            parent=self.window,
+        )
+        dlg.exec()
 
     def run_subscription_check(self) -> None:
         """后台拉取所有订阅剧集的更新，并在 Emby 差量对比及画质挑选后汇聚。"""
@@ -633,13 +693,12 @@ class Controller(QObject):
             emby_cli = EmbyClient(self.cfg.get("emby_server_url", ""), self.cfg.get("emby_api_key", ""))
 
         priority = self.cfg.get("quality_priority", ["1080P", "4K", "720P", "OTHER"])
-        collected_updates: list[dict] = []
+        collected_updates: list[SubscriptionUpdate] = []
 
         for sub in active_subs:
-            # 抓取详情页（SiteFetcher 无 fetch_detail，统一走 fetch_item_detail）
-            item = ParseItem(title=sub.title or "",
-                             detail_url=sub.detail_url or "")
-            if not self.fetch_item_detail(item):
+            item = ParseItem(title=sub.title or "", detail_url=sub.detail_url or "")
+            module_id = getattr(sub, "site_key", "") or ""
+            if not self.fetch_item_detail(item, module_id=module_id):
                 continue
 
             # 更新最新集标识
@@ -652,33 +711,51 @@ class Controller(QObject):
             if emby_cli and emby_cli.is_configured():
                 emby_existing = emby_cli.find_series_episodes(sub.title)
 
-            # 筛选待下载更新
-            updates = filter_subscription_updates(
+            # 深入分析最新集与历史漏集
+            up = analyze_subscription_updates(
                 sub=sub,
                 item=item,
-                is_pushed_fn=self.db.is_magnet_pushed,
+                is_magnet_pushed_fn=self.db.is_magnet_pushed,
+                is_ep_pushed_fn=self.db.is_episode_pushed,
                 priority_order=priority,
                 emby_existing=emby_existing,
             )
-            collected_updates.extend(updates)
+            if up and up.has_any_update:
+                collected_updates.append(up)
+
+        self.sub_page.reload()
 
         if not collected_updates:
             log.info("订阅检查完毕：无新增待下载集数。")
-            self.sub_page.reload()
             return
 
-        log.info("订阅发现 %d 条新剧集更新！", len(collected_updates))
-        self.sub_page.reload()
+        log.info("订阅发现 %d 部剧集有更新！", len(collected_updates))
 
         # 是否开启了“直接下载无需同意”
         if self.cfg.get("sub_auto_direct_download", False):
-            self._push_subscription_tasks(collected_updates)
-            self.notify_ok("订阅剧集已自动开始下载", f"已直接推送 {len(collected_updates)} 条最新剧集磁力。")
+            tasks_to_push = []
+            total_missing = 0
+            for up in collected_updates:
+                if up.latest_candidate:
+                    tasks_to_push.append(up.latest_candidate)
+                total_missing += len(up.missing_history)
+
+            if tasks_to_push:
+                self._push_subscription_tasks(tasks_to_push)
+
+            if total_missing > 0:
+                self.notify_ok(
+                    "订阅剧集已自动开始下载",
+                    f"已自动推送 {len(tasks_to_push)} 部剧集的最新更新。\n另检测到媒体库还缺少 {total_missing} 集历史剧集，可前往订阅页补全。",
+                )
+            else:
+                self.notify_ok("订阅剧集已自动开始下载", f"已直接推送 {len(tasks_to_push)} 条最新剧集磁力。")
         else:
-            # 弹出汇聚确认对话框
+            # 弹出聚焦最新集并附带历史补全入口的汇聚确认对话框
             dlg = SubscriptionConfirmDialog(
                 collected_updates,
                 on_confirm=self._push_subscription_tasks,
+                on_open_detail=self.open_subscription_detail,
                 parent=self.window,
             )
             dlg.exec()

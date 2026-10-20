@@ -195,6 +195,7 @@ class Subscription:
     emby_series_id: str = ""       # 绑定的 Emby Series ID（可选）
     created_at: int = 0
     updated_at: int = 0
+    site_key: str = ""             # 所属站点标识 / module_id（多站点兼容）
 
 
 @dataclass
@@ -210,6 +211,14 @@ class SubscriptionHistory:
 
 
 def sub_from_row(row: Any) -> Subscription:
+    # 兼容可能包含或不包含 site_key 的行（tuple 或 Row）
+    site_key = ""
+    if hasattr(row, "keys"):
+        if "site_key" in row.keys():
+            site_key = row["site_key"] or ""
+    elif len(row) > 8:
+        site_key = row[8] or ""
+
     return Subscription(
         id=row[0],
         title=row[1],
@@ -219,5 +228,6 @@ def sub_from_row(row: Any) -> Subscription:
         emby_series_id=row[5] or "",
         created_at=row[6],
         updated_at=row[7],
+        site_key=site_key,
     )
 

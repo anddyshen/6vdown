@@ -80,6 +80,7 @@ class SubscriptionPage(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         root.addWidget(self.table, 1)
 
         # 底部状态
@@ -177,4 +178,16 @@ class SubscriptionPage(QWidget):
         if QMessageBox.question(self, "确认删除", f"确定取消对《{name}》的更新订阅？") == QMessageBox.StandardButton.Yes:
             self.db.delete_subscription(sub_id)
             self.reload()
+
+    def _on_cell_double_clicked(self, row: int, col: int) -> None:
+        # 双击整行任意单元格（除操作列外）即可打开该剧全部分集磁力详情
+        if col == 5:
+            return
+        if row < len(self._subs):
+            sub = self._subs[row]
+            from ..models import ParseItem
+            item = ParseItem(title=sub.title, detail_url=sub.detail_url)
+            if self.ctl and hasattr(self.ctl, "fetch_item_detail"):
+                if self.ctl.fetch_item_detail(item, module_id=getattr(sub, "site_key", "") or ""):
+                    self.ctl.open_subscription_detail(item)
 

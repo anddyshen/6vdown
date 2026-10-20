@@ -494,6 +494,8 @@ class SearchPage(QWidget):
         if row >= len(self._rows) or self.on_subscribe is None:
             return
         _site, _mid, it = self._rows[row]
+        if _mid and not getattr(it, "site_key", ""):
+            setattr(it, "site_key", _mid)
         self.on_subscribe(it)
 
     def _fetch_rows(self, rows: list) -> None:

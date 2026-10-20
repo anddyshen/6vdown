@@ -675,12 +675,13 @@ class Database:
     def add_subscription(self, sub: Subscription) -> int:
         with self._lock, self._conn() as c:
             now = now_ms()
+            site_key = getattr(sub, "site_key", "") or ""
             cur = c.execute(
-                """INSERT INTO subscriptions(title, detail_url, status, last_ep, emby_series_id, created_at, updated_at)
-                   VALUES(?,?,?,?,?,?,?)
-                   ON CONFLICT(detail_url) DO UPDATE SET title=excluded.title, updated_at=excluded.updated_at""",
+                """INSERT INTO subscriptions(title, detail_url, status, last_ep, emby_series_id, created_at, updated_at, site_key)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(detail_url) DO UPDATE SET title=excluded.title, updated_at=excluded.updated_at, site_key=excluded.site_key""",
                 (sub.title, sub.detail_url, sub.status or "active", sub.last_ep or "",
-                 sub.emby_series_id or "", sub.created_at or now, now),
+                 sub.emby_series_id or "", sub.created_at or now, now, site_key),
             )
             return int(cur.lastrowid or 0)
 
@@ -699,10 +700,11 @@ class Database:
 
     def update_subscription(self, sub: Subscription) -> None:
         with self._lock, self._conn() as c:
+            site_key = getattr(sub, "site_key", "") or ""
             c.execute(
-                """UPDATE subscriptions SET title=?, status=?, last_ep=?, emby_series_id=?, updated_at=?
+                """UPDATE subscriptions SET title=?, status=?, last_ep=?, emby_series_id=?, updated_at=?, site_key=?
                    WHERE id=?""",
-                (sub.title, sub.status, sub.last_ep, sub.emby_series_id, now_ms(), sub.id),
+                (sub.title, sub.status, sub.last_ep, sub.emby_series_id, now_ms(), site_key, sub.id),
             )
 
     def delete_subscription(self, sub_id: int) -> None:
@@ -717,6 +719,26 @@ class Database:
                 (sub_id, magnet_url),
             ).fetchone()
             return bool(r)
+
+    def is_episode_pushed(self, sub_id: int, episode_label: str) -> bool:
+        """检查某分集标签是否已推送下载过。"""
+        if not episode_label:
+            return False
+        with self._lock, self._conn() as c:
+            r = c.execute(
+                "SELECT 1 FROM subscription_history WHERE sub_id=? AND episode_label=? LIMIT 1",
+                (sub_id, episode_label.strip()),
+            ).fetchone()
+            return bool(r)
+
+    def get_pushed_episodes(self, sub_id: int) -> set[str]:
+        """获取该剧所有已推送过的分集标签集合。"""
+        with self._lock, self._conn() as c:
+            rows = c.execute(
+                "SELECT episode_label FROM subscription_history WHERE sub_id=?",
+                (sub_id,),
+            ).fetchall()
+            return {r["episode_label"].strip() for r in rows if r["episode_label"]}
 
     def record_pushed_magnet(self, sub_id: int, episode_label: str, magnet_url: str, quality: str = "") -> None:
         with self._lock, self._conn() as c:
