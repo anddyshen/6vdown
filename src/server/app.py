@@ -50,6 +50,10 @@ class EmbyTestRequest(BaseModel):
     api_key: str
 
 
+class VerifyRequest(BaseModel):
+    token: str = ""
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="6vdown / C2Down Web Server", version="1.0.4")
 
@@ -65,7 +69,48 @@ def create_app() -> FastAPI:
     # 全局服务实例
     service = ServerService()
 
+    # 安全鉴权中间件（当配置了 api_token 或环境变量时强制校验）
+    @app.middleware("http")
+    async def token_auth_middleware(request, call_next):
+        path = request.url.path
+        # 静态资源、根路径和鉴权校验接口放行
+        if not path.startswith("/api/") or path == "/api/auth/verify":
+            return await call_next(request)
+
+        configured_token = os.environ.get("C2DOWN_API_TOKEN") or service.cfg.get("api_token", "")
+        if not configured_token:
+            # 未配置 Token 则默认局域网免密放行
+            return await call_next(request)
+
+        # 获取请求携带的 Token：优先 X-API-Token，其次 Bearer Token，再次 URL 参数 ?token=
+        token = request.headers.get("X-API-Token") or ""
+        if not token:
+            auth_val = request.headers.get("Authorization") or ""
+            if auth_val.lower().startswith("bearer "):
+                token = auth_val[7:].strip()
+        if not token:
+            token = request.query_params.get("token") or ""
+
+        if token != configured_token:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "error": "Unauthorized: API Token 无效或未提供"},
+            )
+
+        return await call_next(request)
+
     # ------------------------------------------------------------ 状态与全局
+    @app.post("/api/auth/verify")
+    def verify_auth(req: Optional[VerifyRequest] = None):
+        configured_token = os.environ.get("C2DOWN_API_TOKEN") or service.cfg.get("api_token", "")
+        if not configured_token:
+            return {"ok": True, "token_required": False, "version": "1.0.4"}
+        token = (req.token if req else "") or ""
+        if token == configured_token:
+            return {"ok": True, "token_required": True, "version": "1.0.4"}
+        return {"ok": False, "token_required": True, "error": "API Token 不匹配"}
+
     @app.get("/api/status")
     def get_status():
         cur_site = service.db.current_site()
@@ -192,9 +237,23 @@ def create_app() -> FastAPI:
     def reset_cache():
         return {"ok": service.reset_cache()}
 
-    # ------------------------------------------------------------ 前端静态页面
+    # ------------------------------------------------------------ 前端静态页面与 PWA
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     index_file = STATIC_DIR / "index.html"
+
+    @app.get("/manifest.json")
+    def manifest():
+        manifest_path = STATIC_DIR / "manifest.json"
+        if manifest_path.exists():
+            return FileResponse(manifest_path, media_type="application/manifest+json")
+        raise HTTPException(404)
+
+    @app.get("/sw.js")
+    def service_worker():
+        sw_path = STATIC_DIR / "sw.js"
+        if sw_path.exists():
+            return FileResponse(sw_path, media_type="application/javascript")
+        raise HTTPException(404)
 
     @app.get("/", response_class=HTMLResponse)
     def index():

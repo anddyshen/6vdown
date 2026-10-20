@@ -2,8 +2,13 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>6vdown / C2Down · 影视解析与自动追剧</title>
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/static/icon-192.png">
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Vue 3 CDN -->
@@ -241,6 +246,23 @@
 
       <!-- ------------------------------------------------ 设置面板 ------------------------------------------------ -->
       <section v-if="tab === 'settings'" class="space-y-6">
+        <!-- 0. API 安全与移动端鉴权 -->
+        <div class="bg-indigo-50 border border-indigo-200 p-5 rounded-xl space-y-3">
+          <div class="flex justify-between items-center">
+            <div>
+              <h3 class="font-bold text-slate-800 text-sm flex items-center">
+                <span class="mr-2">🔐</span> API 安全访问令牌 (Token) 与安卓端直连
+              </h3>
+              <p class="text-xs text-slate-500">当 NAS 通过端口转发暴露至公网时建议开启。开启后安卓手机客户端与外部请求必须携带该 Token。</p>
+            </div>
+            <span class="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700">公网安全推荐</span>
+          </div>
+          <div class="flex flex-col sm:flex-row gap-3">
+            <input v-model="config.api_token" type="password" placeholder="留空为局域网免密模式；输入自定义 Token 开启安全防护" class="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono" />
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow shrink-0">保存安全令牌</button>
+          </div>
+        </div>
+
         <!-- 1. 下载主机管理 -->
         <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
           <div class="flex justify-between items-center">
@@ -513,6 +535,26 @@
     createApp({
       setup() {
         const tab = ref('workbench');
+        const apiToken = ref(localStorage.getItem('6vdown_api_token') || '');
+
+        async function authFetch(url, options = {}) {
+          options.headers = options.headers || {};
+          if (apiToken.value) {
+            options.headers['X-API-Token'] = apiToken.value;
+          }
+          const res = await fetch(url, options);
+          if (res.status === 401) {
+            const token = prompt('当前服务端已开启安全鉴权，请输入 API Token:');
+            if (token !== null) {
+              apiToken.value = token.trim();
+              localStorage.setItem('6vdown_api_token', apiToken.value);
+              options.headers['X-API-Token'] = apiToken.value;
+              return fetch(url, options);
+            }
+          }
+          return res;
+        }
+
         const sites = ref([]);
         const selectedSiteId = ref(null);
         const filterKeyword = ref('');
@@ -596,7 +638,7 @@
           hostModal.value.testing = true;
           hostModal.value.testMsg = '';
           try {
-            const res = await fetch('/api/settings/host_test', {
+            const res = await authFetch('/api/settings/host_test', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(hostModal.value.form)
@@ -616,7 +658,7 @@
             showMsg('请填写主机名称与地址', true);
             return;
           }
-          await fetch('/api/settings/host', {
+          await authFetch('/api/settings/host', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(hostModal.value.form)
@@ -628,7 +670,7 @@
 
         async function testHostDirect(h) {
           try {
-            const res = await fetch('/api/settings/host_test', {
+            const res = await authFetch('/api/settings/host_test', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ id: h.id, type: h.type, name: h.name, address: h.address, port: h.port, username: h.username })
@@ -640,7 +682,7 @@
         }
 
         async function activateHost(h) {
-          await fetch('/api/settings/host_activate', {
+          await authFetch('/api/settings/host_activate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: h.id })
@@ -651,14 +693,14 @@
 
         async function deleteHost(h) {
           if (!confirm(`确认删除下载主机 ${h.name}？`)) return;
-          await fetch(`/api/settings/host/${h.id}`, { method: 'DELETE' });
+          await authFetch(`/api/settings/host/${h.id}`, { method: 'DELETE' });
           showMsg('已删除主机');
           loadSettings();
         }
 
         async function resetCache() {
           if (!confirm('确认清空抓取缓存？下次解析将重新全量拉取。')) return;
-          await fetch('/api/settings/reset_cache', { method: 'POST' });
+          await authFetch('/api/settings/reset_cache', { method: 'POST' });
           showMsg('抓取缓存已清空！');
           loadWorkbench();
         }
@@ -668,14 +710,14 @@
         }
 
         async function loadSites() {
-          const res = await fetch('/api/sites').then(r => r.json());
+          const res = await authFetch('/api/sites').then(r => r.json());
           sites.value = res;
           const cur = res.find(s => s.is_current);
           if (cur) selectedSiteId.value = cur.id;
         }
 
         async function switchSite() {
-          await fetch('/api/sites/current', {
+          await authFetch('/api/sites/current', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ site_id: selectedSiteId.value })
@@ -684,7 +726,7 @@
         }
 
         async function loadWorkbench() {
-          const res = await fetch('/api/workbench').then(r => r.json());
+          const res = await authFetch('/api/workbench').then(r => r.json());
           items.value = res;
         }
 
@@ -695,7 +737,7 @@
         });
 
         async function triggerParse() {
-          await fetch('/api/workbench/parse', {
+          await authFetch('/api/workbench/parse', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ site_ids: [selectedSiteId.value] })
@@ -705,7 +747,7 @@
         }
 
         async function pollParse() {
-          const status = await fetch('/api/workbench/parse_status').then(r => r.json());
+          const status = await authFetch('/api/workbench/parse_status').then(r => r.json());
           parseStatus.value = status;
           if (status.is_parsing) {
             setTimeout(pollParse, 1500);
@@ -718,7 +760,7 @@
           detailModal.value = { show: true, title: item.title, magnets: item.magnets || [], loading: !item.magnets_count };
           if (!item.magnets || !item.magnets.length) {
             try {
-              const res = await fetch('/api/workbench/detail', {
+              const res = await authFetch('/api/workbench/detail', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ detail_url: item.detail_url, module_id: item.site_key || '' })
@@ -733,7 +775,7 @@
         }
 
         async function quickSubscribe(item) {
-          const res = await fetch('/api/subscriptions', {
+          const res = await authFetch('/api/subscriptions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: item.title, detail_url: item.detail_url, site_key: item.site_key || '' })
@@ -745,12 +787,12 @@
         }
 
         async function loadSubs() {
-          subs.value = await fetch('/api/subscriptions').then(r => r.json());
+          subs.value = await authFetch('/api/subscriptions').then(r => r.json());
         }
 
         async function checkSub(sub) {
           showMsg(`正在检查《${sub.title}》……`);
-          const res = await fetch(`/api/subscriptions/${sub.id}/check`, { method: 'POST' }).then(r => r.json());
+          const res = await authFetch(`/api/subscriptions/${sub.id}/check`, { method: 'POST' }).then(r => r.json());
           if (res.update) {
             subUpdates.value = [res.update];
             showMsg(`发现更新: 《${sub.title}》`);
@@ -763,7 +805,7 @@
         async function checkAllSubs() {
           checkingSubs.value = true;
           try {
-            const res = await fetch('/api/subscriptions/check_all', { method: 'POST' }).then(r => r.json());
+            const res = await authFetch('/api/subscriptions/check_all', { method: 'POST' }).then(r => r.json());
             subUpdates.value = res.updates || [];
             if (subUpdates.value.length) {
               showMsg(`检查完毕，共发现 ${subUpdates.value.length} 部剧集有新更新！`);
@@ -778,14 +820,14 @@
 
         async function deleteSub(sub) {
           if (!confirm(`确认取消订阅《${sub.title}》？`)) return;
-          await fetch(`/api/subscriptions/${sub.id}`, { method: 'DELETE' });
+          await authFetch(`/api/subscriptions/${sub.id}`, { method: 'DELETE' });
           showMsg('已删除订阅');
           loadSubs();
         }
 
         async function downloadMagnet(url, subId = null, epLabel = '', quality = '') {
           try {
-            const res = await fetch('/api/download', {
+            const res = await authFetch('/api/download', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ url, sub_id: subId, ep_label: epLabel, quality })
@@ -807,7 +849,7 @@
           if (!searchKeyword.value.trim()) return;
           searching.value = true;
           try {
-            const res = await fetch('/api/search', {
+            const res = await authFetch('/api/search', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ keyword: searchKeyword.value.trim() })
@@ -819,7 +861,7 @@
         }
 
         async function loadSettings() {
-          const res = await fetch('/api/settings').then(r => r.json());
+          const res = await authFetch('/api/settings').then(r => r.json());
           config.value = res.config || {};
           hosts.value = res.hosts || [];
           availableBlocks.value = res.available_blocks || [];
@@ -827,16 +869,20 @@
         }
 
         async function saveConfig() {
-          await fetch('/api/settings/config', {
+          await authFetch('/api/settings/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config.value)
           });
+          if (config.value.api_token) {
+            apiToken.value = config.value.api_token;
+            localStorage.setItem('6vdown_api_token', apiToken.value);
+          }
           showMsg('配置已保存！');
         }
 
         async function testEmby() {
-          const res = await fetch('/api/settings/emby_test', {
+          const res = await authFetch('/api/settings/emby_test', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ server_url: config.value.emby_server_url, api_key: config.value.emby_api_key })
@@ -869,6 +915,13 @@
         };
       }
     }).mount('#app');
+
+    // 注册 PWA 移动端 Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
   </script>
 </body>
 </html>

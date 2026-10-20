@@ -1,0 +1,33 @@
+name: vdown_mobile
+description: "6vdown Android & Mobile Client - NAS 追剧与磁力推送移动客户端"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 网络请求与拦截器
+  dio: ^5.4.1
+  # 安全凭据加密存储（基于 Android KeyStore）
+  flutter_secure_storage: ^9.0.0
+  # 本地简单键值缓存
+  shared_preferences: ^2.2.2
+  # 状态管理
+  provider: ^6.1.1
+  # 系统剪贴板与原生意图
+  receive_sharing_intent: ^1.4.5
+  # 友好提示
+  fluttertoast: ^8.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

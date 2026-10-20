@@ -81,6 +81,15 @@ class TestServerService(unittest.TestCase):
         ok = self.service.reset_cache()
         self.assertTrue(ok)
 
+    def test_token_auth_logic(self):
+        from src.server.app import create_app, VerifyRequest
+        app = create_app()
+        verify_route = [r for r in app.routes if getattr(r, "path", "") == "/api/auth/verify"][0]
+        # 默认无 token 状态
+        res = verify_route.endpoint(VerifyRequest(token=""))
+        self.assertTrue(res["ok"])
+        self.assertFalse(res["token_required"])
+
 
 if __name__ == "__main__":
     unittest.main()
