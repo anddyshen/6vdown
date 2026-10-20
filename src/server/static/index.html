@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>6vdown / C2Down · 影视解析与自动追剧</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+  <div id="app" v-cloak class="flex flex-col min-h-screen">
+    <!-- 顶部导航栏 -->
+    <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-40">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+        <div class="flex items-center space-x-3">
+          <div class="bg-white text-indigo-600 p-2 rounded-lg font-black text-xl shadow">⚡</div>
+          <div>
+            <h1 class="font-bold text-lg leading-tight">6vdown / C2Down</h1>
+            <p class="text-xs text-indigo-200">影视站解析 & NAS 自动追剧</p>
+          </div>
+        </div>
+
+        <!-- 导航 Tab -->
+        <nav class="flex space-x-1 sm:space-x-2">
+          <button @click="tab = 'workbench'" :class="tabClass('workbench')" class="px-3 py-2 rounded-md text-sm font-medium transition">
+            ⚡ 工作台
+          </button>
+          <button @click="tab = 'subscriptions'" :class="tabClass('subscriptions')" class="px-3 py-2 rounded-md text-sm font-medium transition">
+            📺 我的订阅
+            <span v-if="subs.length" class="ml-1 px-1.5 py-0.5 text-xs bg-indigo-500 rounded-full">{{ subs.length }}</span>
+          </button>
+          <button @click="tab = 'search'" :class="tabClass('search')" class="px-3 py-2 rounded-md text-sm font-medium transition">
+            🔍 跨站搜索
+          </button>
+          <button @click="tab = 'settings'" :class="tabClass('settings')" class="px-3 py-2 rounded-md text-sm font-medium transition">
+            ⚙️ 设置
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- 主体内容 -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
+      <!-- 提示消息条 -->
+      <div v-if="notice.show" :class="notice.isError ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-emerald-100 text-emerald-800 border-emerald-300'" class="mb-4 p-3 rounded-lg border text-sm flex justify-between items-center transition shadow-sm">
+        <span>{{ notice.text }}</span>
+        <button @click="notice.show = false" class="font-bold px-2">&times;</button>
+      </div>
+
+      <!-- ------------------------------------------------ 工作台 ------------------------------------------------ -->
+      <section v-if="tab === 'workbench'" class="space-y-4">
+        <!-- 控制栏 -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-3 items-center justify-between">
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <span class="text-sm font-semibold text-slate-600">当前解析源:</span>
+            <select v-model="selectedSiteId" @change="switchSite" class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+              <option v-for="s in sites" :key="s.id" :value="s.id">{{ s.name }} {{ s.is_current ? '（默认）' : '' }}</option>
+            </select>
+            <input v-model="filterKeyword" type="text" placeholder="快速过滤当前条目..." class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 w-48 sm:w-64" />
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <button @click="openLogs = !openLogs" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 hover:bg-slate-50 transition">
+              📜 控制台日志 <span v-if="parseStatus.is_parsing" class="animate-pulse text-amber-500 font-bold">● 运行中</span>
+            </button>
+            <button @click="triggerParse" :disabled="parseStatus.is_parsing" class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium px-4 py-1.5 rounded-lg text-sm shadow transition flex items-center space-x-1">
+              <span v-if="parseStatus.is_parsing" class="animate-spin mr-1">⟳</span>
+              <span>{{ parseStatus.is_parsing ? '正在抓取...' : '🚀 开始解析' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 日志抽屉 -->
+        <div v-if="openLogs" class="bg-slate-900 text-slate-200 font-mono text-xs p-4 rounded-xl shadow-inner max-h-60 overflow-y-auto space-y-1">
+          <div v-for="(l, i) in parseStatus.logs" :key="i">{{ l }}</div>
+          <div v-if="!parseStatus.logs.length" class="text-slate-500">暂无日志。点击“开始解析”可在此实时查看抓取过程。</div>
+        </div>
+
+        <!-- 条目列表 -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+              <thead class="bg-slate-50 text-slate-500 text-left">
+                <tr>
+                  <th class="py-3 px-4 font-semibold">影视标题</th>
+                  <th class="py-3 px-3 font-semibold w-24">区块</th>
+                  <th class="py-3 px-3 font-semibold w-28">更新日期</th>
+                  <th class="py-3 px-3 font-semibold w-24 text-center">分集磁力</th>
+                  <th class="py-3 px-4 font-semibold w-36 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-for="(it, idx) in filteredItems" :key="idx" class="hover:bg-slate-50 transition">
+                  <td class="py-3 px-4">
+                    <span v-if="it.is_red" class="bg-red-100 text-red-700 text-xs px-1.5 py-0.5 rounded font-bold mr-1">置顶</span>
+                    <span v-if="it.is_classic" class="bg-amber-100 text-amber-800 text-xs px-1.5 py-0.5 rounded mr-1">经典</span>
+                    <a :href="it.detail_url" target="_blank" class="font-medium text-slate-800 hover:text-indigo-600 transition">{{ it.title }}</a>
+                  </td>
+                  <td class="py-3 px-3 text-slate-500">{{ it.block }}</td>
+                  <td class="py-3 px-3 text-slate-500 whitespace-nowrap">{{ it.date }}</td>
+                  <td class="py-3 px-3 text-center">
+                    <span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold" :class="it.magnets_count ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-400'">
+                      {{ it.magnets_count }} 条
+                    </span>
+                  </td>
+                  <td class="py-3 px-4 text-right space-x-1 whitespace-nowrap">
+                    <button @click="openItemDetail(it)" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded transition">分集详情</button>
+                    <button @click="quickSubscribe(it)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded transition">追剧</button>
+                  </td>
+                </tr>
+                <tr v-if="!filteredItems.length">
+                  <td colspan="5" class="py-12 text-center text-slate-400">
+                    {{ parseStatus.is_parsing ? '正在抓取中，请稍候……' : '暂无数据，请点击上方“开始解析”获取最新电影剧集。' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------ 我的订阅 ------------------------------------------------ -->
+      <section v-if="tab === 'subscriptions'" class="space-y-4">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center flex-wrap gap-2">
+          <div>
+            <h2 class="font-bold text-slate-800">追剧自动检查清单</h2>
+            <p class="text-xs text-slate-500">定时后台自动巡检，发现新集数自动推送到下载器并联动 Emby 媒体库。</p>
+          </div>
+          <div class="space-x-2">
+            <button @click="checkAllSubs" :disabled="checkingSubs" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-1.5 rounded-lg font-medium transition shadow">
+              {{ checkingSubs ? '正在检查...' : '⚡ 全部立即检查' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 发现更新卡片区域 -->
+        <div v-if="subUpdates.length" class="space-y-3">
+          <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">🎉 发现剧集最新更新</div>
+          <div v-for="up in subUpdates" :key="up.sub_id" class="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+            <div class="space-y-1">
+              <div class="flex items-center space-x-2">
+                <span class="font-bold text-slate-900 text-base">《{{ up.title }}》</span>
+                <span v-if="up.latest_candidate" class="bg-emerald-600 text-white text-xs px-2 py-0.5 rounded font-bold">最新 {{ up.latest_candidate.ep_label }}</span>
+                <span v-if="up.latest_candidate" class="bg-indigo-100 text-indigo-700 text-xs px-1.5 py-0.5 rounded font-medium">{{ up.latest_candidate.quality }}</span>
+              </div>
+              <p v-if="up.missing_history && up.missing_history.length" class="text-xs text-amber-800">
+                💡 {{ up.has_emby ? '媒体库检测到' : '历史检测' }}还缺少 <b>{{ up.missing_history.length }}</b> 集（{{ up.missing_history.map(m=>m.ep_label).slice(0,3).join(', ') }} 等）
+              </p>
+            </div>
+            <div class="flex space-x-2 w-full md:w-auto justify-end">
+              <button v-if="up.latest_candidate" @click="downloadMagnet(up.latest_candidate.magnet_url, up.sub_id, up.latest_candidate.ep_label, up.latest_candidate.quality)" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded font-semibold transition shadow">
+                ⚡ 立即下载最新集
+              </button>
+              <button v-if="up.missing_history && up.missing_history.length" @click="downloadAllMissing(up)" class="bg-amber-500 hover:bg-amber-600 text-white text-xs px-3 py-1.5 rounded font-semibold transition shadow">
+                + 一并下载缺失集 ({{ up.missing_history.length }})
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 订阅剧集列表表格 -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-left">
+              <tr>
+                <th class="py-3 px-4 font-semibold">订阅剧名</th>
+                <th class="py-3 px-3 font-semibold">最新追踪进度</th>
+                <th class="py-3 px-3 font-semibold">Emby 绑定</th>
+                <th class="py-3 px-4 font-semibold text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-for="sub in subs" :key="sub.id" class="hover:bg-slate-50 transition">
+                <td class="py-3 px-4">
+                  <div class="font-bold text-slate-800">{{ sub.title }}</div>
+                  <a :href="sub.detail_url" target="_blank" class="text-xs text-indigo-500 hover:underline">{{ sub.detail_url }}</a>
+                </td>
+                <td class="py-3 px-3 text-slate-600 font-medium">{{ sub.last_ep || '等待首检' }}</td>
+                <td class="py-3 px-3 text-slate-500 text-xs">
+                  <span v-if="sub.emby_series_id" class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">ID: {{ sub.emby_series_id }}</span>
+                  <span v-else class="text-slate-400">未绑定/自动探测</span>
+                </td>
+                <td class="py-3 px-4 text-right space-x-2">
+                  <button @click="checkSub(sub)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded transition">检查更新</button>
+                  <button @click="deleteSub(sub)" class="text-xs bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded transition">删除</button>
+                </td>
+              </tr>
+              <tr v-if="!subs.length">
+                <td colspan="4" class="py-12 text-center text-slate-400">暂无追剧订阅。可在“工作台”或“跨站搜索”中点击“追剧”添加。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------ 跨站搜索 ------------------------------------------------ -->
+      <section v-if="tab === 'search'" class="space-y-4">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+          <div class="flex gap-2">
+            <input v-model="searchKeyword" @keyup.enter="doSearch" type="text" placeholder="输入影视名称（如 繁花 / 人生复本 / 狂飙）..." class="flex-1 bg-slate-100 border border-slate-300 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button @click="doSearch" :disabled="searching" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded-lg text-sm transition shadow flex items-center">
+              <span v-if="searching" class="animate-spin mr-1">⟳</span>
+              <span>{{ searching ? '搜索中...' : '搜索' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="searchResults.length" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-left">
+              <tr>
+                <th class="py-3 px-4 font-semibold">匹配影视标题</th>
+                <th class="py-3 px-3 font-semibold">日期</th>
+                <th class="py-3 px-3 font-semibold text-center">分集磁力</th>
+                <th class="py-3 px-4 font-semibold text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-for="(it, i) in searchResults" :key="i" class="hover:bg-slate-50 transition">
+                <td class="py-3 px-4">
+                  <a :href="it.detail_url" target="_blank" class="font-medium text-slate-800 hover:text-indigo-600">{{ it.title }}</a>
+                </td>
+                <td class="py-3 px-3 text-slate-500 whitespace-nowrap">{{ it.date }}</td>
+                <td class="py-3 px-3 text-center">
+                  <span class="px-2 py-0.5 rounded text-xs" :class="it.magnets_count ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-400'">{{ it.magnets_count }} 条</span>
+                </td>
+                <td class="py-3 px-4 text-right space-x-1 whitespace-nowrap">
+                  <button @click="openItemDetail(it)" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded transition">查看分集</button>
+                  <button @click="quickSubscribe(it)" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded transition">加入追剧</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------ 设置面板 ------------------------------------------------ -->
+      <section v-if="tab === 'settings'" class="space-y-6">
+        <!-- 下载主机管理 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <div class="flex justify-between items-center">
+            <div>
+              <h3 class="font-bold text-slate-800">下载器配置 (qBittorrent / Transmission / Aria2)</h3>
+              <p class="text-xs text-slate-500">发送磁力链接与种子的目标下载服务器。</p>
+            </div>
+            <button @click="openAddHost = true" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-3 py-1.5 rounded-lg font-bold transition">＋ 添加下载主机</button>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div v-for="h in hosts" :key="h.id" class="border rounded-lg p-3 flex justify-between items-center" :class="h.is_active ? 'border-indigo-500 bg-indigo-50/30' : 'border-slate-200'">
+              <div class="space-y-0.5">
+                <div class="flex items-center space-x-2">
+                  <span class="font-bold text-sm text-slate-800">{{ h.name }}</span>
+                  <span class="text-xs uppercase px-1.5 py-0.2 rounded font-semibold bg-slate-200 text-slate-700">{{ h.type }}</span>
+                  <span v-if="h.is_active" class="text-xs bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">激活使用中</span>
+                </div>
+                <div class="text-xs text-slate-500">{{ h.address }}:{{ h.port }}</div>
+              </div>
+              <div class="space-x-1">
+                <button @click="testHost(h)" class="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded">测试</button>
+                <button v-if="!h.is_active" @click="activateHost(h)" class="text-xs bg-indigo-600 text-white px-2 py-1 rounded">激活</button>
+                <button @click="deleteHost(h)" class="text-xs text-rose-500 hover:bg-rose-50 px-2 py-1 rounded">删除</button>
+              </div>
+            </div>
+            <div v-if="!hosts.length" class="text-xs text-slate-400 col-span-2 py-4 text-center">暂未配置下载主机，请点击右上角添加。</div>
+          </div>
+        </div>
+
+        <!-- Emby 媒体库联动 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <div class="flex justify-between items-center">
+            <div>
+              <h3 class="font-bold text-slate-800">Emby 媒体库差量比对</h3>
+              <p class="text-xs text-slate-500">连接您的 Emby 媒体服务器，智能对比哪些剧集已下载，杜绝重复推送与误判。</p>
+            </div>
+            <label class="flex items-center space-x-2 cursor-pointer">
+              <input type="checkbox" v-model="config.emby_enabled" class="rounded text-indigo-600 focus:ring-indigo-500" />
+              <span class="text-sm font-semibold">启用联动</span>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Emby 服务器地址</label>
+              <input v-model="config.emby_server_url" type="text" placeholder="http://192.168.1.x:8096" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">Emby API Key</label>
+              <input v-model="config.emby_api_key" type="password" placeholder="从 Emby 后台 -> API 密钥 中获取" class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center pt-2">
+            <button @click="testEmby" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg font-medium transition">⚡ 测试 Emby 连通性</button>
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow">保存配置</button>
+          </div>
+        </div>
+
+        <!-- 追剧自动化规则 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <h3 class="font-bold text-slate-800">自动化与追剧首选项</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <label class="flex items-center space-x-2">
+              <input type="checkbox" v-model="config.sub_scheduler_enabled" class="rounded text-indigo-600" />
+              <span>开启周期性后台自动检查</span>
+            </label>
+            <label class="flex items-center space-x-2">
+              <input type="checkbox" v-model="config.sub_auto_direct_download" class="rounded text-indigo-600" />
+              <span>发现新集数后直接自动推送到下载器（无人值守追剧）</span>
+            </label>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">检查周期（小时）</label>
+              <input v-model.number="config.sub_interval_hours" type="number" min="1" max="24" class="w-32 bg-slate-100 border border-slate-300 rounded-lg px-3 py-1 text-sm" />
+            </div>
+          </div>
+          <div class="text-right">
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow">保存配置</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ------------------------------------------------ 弹窗：分集详情 ------------------------------------------------ -->
+    <div v-if="detailModal.show" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-4 max-h-[85vh] flex flex-col">
+        <div class="flex justify-between items-start border-b pb-3">
+          <div>
+            <h3 class="font-bold text-slate-800 text-base leading-tight">{{ detailModal.title }}</h3>
+            <p class="text-xs text-slate-500 mt-0.5">共 {{ detailModal.magnets.length }} 条可下载资源</p>
+          </div>
+          <button @click="detailModal.show = false" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+        </div>
+
+        <div class="overflow-y-auto space-y-2 flex-1 pr-1">
+          <div v-for="(m, i) in detailModal.magnets" :key="i" class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs gap-2">
+            <span class="font-mono text-slate-700 truncate select-all">{{ m.label || m.url }}</span>
+            <div class="flex items-center space-x-1 shrink-0">
+              <button @click="copyText(m.url)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">复制</button>
+              <button @click="downloadMagnet(m.url)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded font-semibold">下载</button>
+            </div>
+          </div>
+          <div v-if="!detailModal.magnets.length" class="text-center text-slate-400 py-8">
+            {{ detailModal.loading ? '正在抓取分集磁力……' : '未检测到可下载链接。' }}
+          </div>
+        </div>
+
+        <div class="text-right pt-2 border-t">
+          <button @click="detailModal.show = false" class="bg-slate-100 hover:bg-slate-200 px-4 py-1.5 rounded-lg text-xs font-semibold text-slate-700">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    createApp({
+      setup() {
+        const tab = ref('workbench');
+        const sites = ref([]);
+        const selectedSiteId = ref(null);
+        const filterKeyword = ref('');
+        const openLogs = ref(false);
+        const parseStatus = ref({ is_parsing: false, logs: [], summary: {} });
+        const items = ref([]);
+        const subs = ref([]);
+        const subUpdates = ref([]);
+        const checkingSubs = ref(false);
+        const searchKeyword = ref('');
+        const searching = ref(false);
+        const searchResults = ref([]);
+        const config = ref({});
+        const hosts = ref([]);
+        const openAddHost = ref(false);
+
+        const notice = ref({ show: false, text: '', isError: false });
+        function showMsg(text, isError = false) {
+          notice.value = { show: true, text, isError };
+          setTimeout(() => { notice.value.show = false; }, 4000);
+        }
+
+        const detailModal = ref({ show: false, title: '', magnets: [], loading: false });
+
+        function tabClass(t) {
+          return tab.value === t ? 'bg-indigo-700 text-white shadow' : 'text-indigo-100 hover:bg-indigo-500 hover:text-white';
+        }
+
+        async function loadSites() {
+          const res = await fetch('/api/sites').then(r => r.json());
+          sites.value = res;
+          const cur = res.find(s => s.is_current);
+          if (cur) selectedSiteId.value = cur.id;
+        }
+
+        async function switchSite() {
+          await fetch('/api/sites/current', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ site_id: selectedSiteId.value })
+          });
+          loadWorkbench();
+        }
+
+        async function loadWorkbench() {
+          const res = await fetch('/api/workbench').then(r => r.json());
+          items.value = res;
+        }
+
+        const filteredItems = computed(() => {
+          if (!filterKeyword.value.trim()) return items.value;
+          const k = filterKeyword.value.trim().toLowerCase();
+          return items.value.filter(it => it.title.toLowerCase().includes(k) || (it.desc && it.desc.toLowerCase().includes(k)));
+        });
+
+        async function triggerParse() {
+          await fetch('/api/workbench/parse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ site_ids: [selectedSiteId.value] })
+          });
+          openLogs.value = true;
+          pollParse();
+        }
+
+        async function pollParse() {
+          const status = await fetch('/api/workbench/parse_status').then(r => r.json());
+          parseStatus.value = status;
+          if (status.is_parsing) {
+            setTimeout(pollParse, 1500);
+          } else {
+            loadWorkbench();
+          }
+        }
+
+        async function openItemDetail(item) {
+          detailModal.value = { show: true, title: item.title, magnets: item.magnets || [], loading: !item.magnets_count };
+          if (!item.magnets || !item.magnets.length) {
+            try {
+              const res = await fetch('/api/workbench/detail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ detail_url: item.detail_url, module_id: item.site_key || '' })
+              }).then(r => r.json());
+              detailModal.value.magnets = res.magnets || [];
+            } catch (e) {
+              showMsg('抓取分集磁力失败', true);
+            } finally {
+              detailModal.value.loading = false;
+            }
+          }
+        }
+
+        async function quickSubscribe(item) {
+          const res = await fetch('/api/subscriptions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: item.title, detail_url: item.detail_url, site_key: item.site_key || '' })
+          }).then(r => r.json());
+          if (res.ok) {
+            showMsg(`已加入追剧订阅: 《${item.title}》`);
+            loadSubs();
+          }
+        }
+
+        async function loadSubs() {
+          subs.value = await fetch('/api/subscriptions').then(r => r.json());
+        }
+
+        async function checkSub(sub) {
+          showMsg(`正在检查《${sub.title}》……`);
+          const res = await fetch(`/api/subscriptions/${sub.id}/check`, { method: 'POST' }).then(r => r.json());
+          if (res.update) {
+            subUpdates.value = [res.update];
+            showMsg(`发现更新: 《${sub.title}》`);
+          } else {
+            showMsg(`《${sub.title}》已是最新进度`);
+          }
+          loadSubs();
+        }
+
+        async function checkAllSubs() {
+          checkingSubs.value = true;
+          try {
+            const res = await fetch('/api/subscriptions/check_all', { method: 'POST' }).then(r => r.json());
+            subUpdates.value = res.updates || [];
+            if (subUpdates.value.length) {
+              showMsg(`检查完毕，共发现 ${subUpdates.value.length} 部剧集有新更新！`);
+            } else {
+              showMsg('全部订阅均已是最新状态，暂无更新。');
+            }
+            loadSubs();
+          } finally {
+            checkingSubs.value = false;
+          }
+        }
+
+        async function deleteSub(sub) {
+          if (!confirm(`确认取消订阅《${sub.title}》？`)) return;
+          await fetch(`/api/subscriptions/${sub.id}`, { method: 'DELETE' });
+          showMsg('已删除订阅');
+          loadSubs();
+        }
+
+        async function downloadMagnet(url, subId = null, epLabel = '', quality = '') {
+          try {
+            const res = await fetch('/api/download', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url, sub_id: subId, ep_label: epLabel, quality })
+            }).then(r => r.json());
+            showMsg(res.message || '已成功推送到下载器！');
+          } catch (e) {
+            showMsg('推送下载器失败，请检查设置中的下载主机', true);
+          }
+        }
+
+        async function downloadAllMissing(up) {
+          for (const m of up.missing_history) {
+            await downloadMagnet(m.magnet_url, up.sub_id, m.ep_label, m.quality);
+          }
+          showMsg(`已下发全部 ${up.missing_history.length} 个缺失分集！`);
+        }
+
+        async function doSearch() {
+          if (!searchKeyword.value.trim()) return;
+          searching.value = true;
+          try {
+            const res = await fetch('/api/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ keyword: searchKeyword.value.trim() })
+            }).then(r => r.json());
+            searchResults.value = res.items || [];
+          } finally {
+            searching.value = false;
+          }
+        }
+
+        async function loadSettings() {
+          const res = await fetch('/api/settings').then(r => r.json());
+          config.value = res.config || {};
+          hosts.value = res.hosts || [];
+        }
+
+        async function saveConfig() {
+          await fetch('/api/settings/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config.value)
+          });
+          showMsg('配置已保存！');
+        }
+
+        async function testEmby() {
+          const res = await fetch('/api/settings/emby_test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ server_url: config.value.emby_server_url, api_key: config.value.emby_api_key })
+          }).then(r => r.json());
+          showMsg(res.message, !res.ok);
+        }
+
+        async function testHost(h) {
+          const res = await fetch('/api/settings/host_test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(h)
+          }).then(r => r.json());
+          showMsg(res.message, !res.ok);
+        }
+
+        async function activateHost(h) {
+          h.is_active = true;
+          await fetch('/api/settings/host', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(h)
+          });
+          loadSettings();
+          showMsg(`已激活 ${h.name}`);
+        }
+
+        async function deleteHost(h) {
+          if (!confirm(`确认删除下载主机 ${h.name}？`)) return;
+          await fetch(`/api/settings/host/${h.id}`, { method: 'DELETE' });
+          loadSettings();
+        }
+
+        function copyText(txt) {
+          navigator.clipboard.writeText(txt);
+          showMsg('链接已复制到剪贴板！');
+        }
+
+        onMounted(() => {
+          loadSites();
+          loadWorkbench();
+          loadSubs();
+          loadSettings();
+        });
+
+        return {
+          tab, tabClass, sites, selectedSiteId, switchSite, filterKeyword,
+          openLogs, parseStatus, triggerParse, items, filteredItems,
+          openItemDetail, quickSubscribe, subs, subUpdates, checkingSubs,
+          checkSub, checkAllSubs, deleteSub, downloadMagnet, downloadAllMissing,
+          searchKeyword, searching, searchResults, doSearch, config, hosts,
+          openAddHost, saveConfig, testEmby, testHost, activateHost, deleteHost,
+          detailModal, copyText, notice
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
+

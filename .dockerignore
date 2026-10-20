@@ -1,0 +1,16 @@
+.git
+.github
+.venv*
+data/
+dist/
+build/
+tests/
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.spec
+.vscode/
+.idea/
+*.bat
+README.md

@@ -94,3 +94,11 @@ class Config:
 
     def __contains__(self, key) -> bool:
         return key in self.data
+
+    def all(self) -> dict:
+        return dict(self.data)
+
+    def update(self, patch: dict) -> None:
+        if isinstance(patch, dict):
+            self.data.update(patch)
+            self.save()

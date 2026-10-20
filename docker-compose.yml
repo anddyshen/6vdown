@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  6vdown:
+    # 如使用本地源码构建：
+    build: .
+    image: 6vdown:latest
+    container_name: 6vdown
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # 持久化数据目录：数据库与配置文件均存放在当前目录的 data/ 中
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - C2DOWN_DATA_DIR=/app/data

@@ -121,6 +121,45 @@ python -m unittest discover -s tests -p "test_*.py"   # 单元测试
 build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，含自定义图标）
 ```
 
+### Docker 容器化与 Web 服务运行（NAS / 服务器 7×24h 追剧）
+
+本项目提供完全无头的轻量 Web 服务端（FastAPI + 纯原生自适应 WebUI），支持在群晖 Synology、威联通 QNAP、Unraid、TrueNAS 及普通 Linux 云服务器上 7×24 小时无人值守运行。
+
+#### 方式一：本地 Python 启动 Web 服务
+```bash
+pip install -r requirements-server.txt
+python server.py --host 0.0.0.0 --port 8080
+```
+
+#### 方式二：Docker Compose 启动（推荐）
+在本地目录新建 `docker-compose.yml`：
+```yaml
+version: '3.8'
+services:
+  6vdown:
+    image: ghcr.io/anddyshen/6vdown:latest
+    container_name: 6vdown
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data     # 持久化数据目录（与桌面版 data 完全通用）
+    environment:
+      - TZ=Asia/Shanghai
+```
+执行 `docker compose up -d` 启动，浏览器访问 `http://<NAS的IP>:8080` 即可。
+
+#### 方式三：Docker Run 命令行
+```bash
+docker run -d \
+  --name 6vdown \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v ./data:/app/data \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/anddyshen/6vdown:latest
+```
+
 ### 绿色便携（绝对绿色）
 - 将 `6vdown.exe` 放入任意文件夹双击运行，exe 同级自动生成 `data\`（数据库 / 配置 / 缓存 / 日志 / 单实例锁）；
 - 把整个文件夹拷贝到其它电脑或目录即可直接使用，**数据随目录走**；

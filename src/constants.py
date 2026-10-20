@@ -26,6 +26,11 @@ def app_data_dir() -> str:
       data\\，仍不写 %APPDATA% 等系统目录。
     """
     candidates = []
+    # 优先支持环境变量指定的自定义数据目录（如 Docker / 容器环境挂载）
+    env_data = os.environ.get("C2DOWN_DATA_DIR") or os.environ.get("DATA_DIR")
+    if env_data:
+        candidates.append(os.path.abspath(env_data))
+
     if is_frozen():
         candidates.append(os.path.join(
             os.path.dirname(os.path.abspath(sys.executable)), "data"))
