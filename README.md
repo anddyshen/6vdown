@@ -123,16 +123,68 @@ build.bat        # 输出 dist\6vdown.exe（PyInstaller --onefile --windowed，�
 
 ### Docker 容器化与 Web 服务运行（NAS / 服务器 7×24h 追剧）
 
-本项目提供完全无头的轻量 Web 服务端（FastAPI + 纯原生自适应 WebUI），支持在群晖 Synology、威联通 QNAP、Unraid、TrueNAS 及普通 Linux 云服务器上 7×24 小时无人值守运行。
+本项目提供完全无头的轻量 Web 服务端（FastAPI + 原生自适应响应式 WebUI），支持在群晖 Synology、威联通 QNAP、Unraid、TrueNAS 及普通 Linux 云服务器上 7×24 小时无人值守运行，具备自动定时巡检更新、自动推送下载器、Emby 媒体库深度联动与跨站影视搜索等完整能力。
 
-#### 方式一：本地 Python 启动 Web 服务
+#### 1. 群晖 Synology NAS 安装与部署
+
+##### 准备工作：创建存储目录与本地数据迁移
+1. 打开群晖 **File Station（文件总管）**，在 `docker` 共享文件夹下新建子文件夹 `6vdown`。
+2. 在 `6vdown` 内部再新建一个子文件夹 `data`（完整路径如：`/docker/6vdown/data`），用于持久化保存数据库、配置与日志。
+> **💡 本地数据无缝迁移**：若想直接使用 Windows 桌面端已有的追剧订阅、历史分集和配置，只需将本地 `data/` 目录下的 `6vdown.db` 和 `config.json` 复制上传到群晖的 `data` 文件夹中即可，程序启动后自动无缝读取。
+
+##### 方式一：Container Manager「项目」一键部署（推荐，DSM 7.2+）
+1. 打开群晖 **Container Manager** 套件，点击左侧 **「项目」** ➔ **「创建」**。
+2. 填写基本信息：
+   - **项目名称**：`6vdown`
+   - **路径**：选择刚刚建好的文件夹 `/docker/6vdown`
+   - **来源**：选择 **「创建 docker-compose.yaml」**
+3. 将以下配置粘贴到文本框中：
+```yaml
+version: '3.8'
+
+services:
+  6vdown:
+    image: ghcr.io/anddyshen/6vdown:latest
+    container_name: 6vdown
+    restart: unless-stopped
+    ports:
+      # 宿主机端口(建议5080避开群晖或qB常用的8080) : 容器内部端口(8080)
+      - "5080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      - C2DOWN_DATA_DIR=/app/data
+```
+4. 点击 **「下一步」** ➔ **「完成」**，群晖将自动拉取镜像并完成启动。
+
+##### 方式二：Docker 图形化向导手动部署（DSM 6.x / 7.1）
+1. 打开 **Container Manager / Docker** 套件 ➔ 进入 **「注册表」** 搜索并下载 `ghcr.io/anddyshen/6vdown:latest`。
+2. 下载完成后，在 **「映像」** 中选中它，点击 **「运行」**：
+   - **容器名称**：`6vdown`，勾选 **「启用自动重新启动」**；
+   - **端口设置**：本地端口填写 `5080`（或任意未占用端口），容器端口 `8080`，协议 `TCP`；
+   - **存储空间设置**：点击“添加文件夹”，选择群晖上的 `docker/6vdown/data`，装载路径填 `/app/data`；
+   - **环境**：新增环境变量 `TZ` = `Asia/Shanghai`。
+3. 点击 **「下一步」** ➔ **「完成」** 启动容器。
+
+##### 方式三：SSH 终端命令行部署
+登录群晖 SSH 终端，进入目标目录执行：
 ```bash
-pip install -r requirements-server.txt
-python server.py --host 0.0.0.0 --port 8080
+docker run -d \
+  --name 6vdown \
+  --restart unless-stopped \
+  -p 5080:8080 \
+  -v /volume1/docker/6vdown/data:/app/data \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/anddyshen/6vdown:latest
 ```
 
-#### 方式二：Docker Compose 启动（推荐）
-在本地目录新建 `docker-compose.yml`：
+---
+
+#### 2. 通用 Linux / 云服务器部署
+
+##### 使用 Docker Compose 部署：
+在任意目录创建 `docker-compose.yml`：
 ```yaml
 version: '3.8'
 services:
@@ -143,22 +195,25 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data     # 持久化数据目录（与桌面版 data 完全通用）
+      - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
 ```
-执行 `docker compose up -d` 启动，浏览器访问 `http://<NAS的IP>:8080` 即可。
+执行 `docker compose up -d` 即可启动。
 
-#### 方式三：Docker Run 命令行
+##### 本地 Python 源码直接运行 Web 服务（免 Docker）：
 ```bash
-docker run -d \
-  --name 6vdown \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -v ./data:/app/data \
-  -e TZ=Asia/Shanghai \
-  ghcr.io/anddyshen/6vdown:latest
+pip install -r requirements-server.txt
+python server.py --host 0.0.0.0 --port 8080
 ```
+
+---
+
+#### 3. 访问与配置注意事项
+
+- **控制台访问**：启动成功后，浏览器打开 `http://<NAS局域网IP>:5080`（或相应端口）即可进入 Web 控制台。
+- **局域网下载器与 Emby 地址**：在 Docker 容器内部访问其他服务时，请避免使用 `localhost` 或 `127.0.0.1`，请直接填写宿主机/局域网实际 IP（如 `http://192.168.1.x:8080` 或 `http://192.168.1.x:8096`）。
+- **镜像权限说明**：若群晖拉取 `ghcr.io/anddyshen/6vdown:latest` 提示认证失败或未找到，可在 GitHub 仓库页面右侧进入 **Packages** ➔ **6vdown** ➔ **Package settings** 底部将可见性设为 **Public**（公开）。
 
 ### 绿色便携（绝对绿色）
 - 将 `6vdown.exe` 放入任意文件夹双击运行，exe 同级自动生成 `data\`（数据库 / 配置 / 缓存 / 日志 / 单实例锁）；
