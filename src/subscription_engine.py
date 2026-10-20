@@ -34,23 +34,46 @@ def _cn_int(s: str) -> int:
 
 
 def _ep_meta(name: str) -> tuple[Optional[int], Optional[int]]:
-    """从组名提取 (季, 集)。如 S01E05 / 第1季第5集 / 第156集。"""
+    """从组名或文件名提取 (季, 集)。如 S02E08 / S01E01-02 / 第一季01-02 / 第1季第5集 / 第156集 / EP08。"""
     text = (name or "").strip()
     s = e = None
-    m = re.search(r"[Ss](\d{1,3})\s*[Ee](\d{1,4})", text)
+    # 1. S02E08 或 S02E01-02
+    m = re.search(r"(?i)[Ss](\d{1,3})\s*[Ee](\d{1,4})(?:-(\d{1,4}))?", text)
     if m:
-        s, e = int(m.group(1)), int(m.group(2))
-    else:
-        m = re.search(r"第\s*([0-9]{1,3}|[一二三四五六七八九十百千两零]+)\s*季", text)
+        s = int(m.group(1))
+        e = int(m.group(3)) if m.group(3) else int(m.group(2))
+        return s, e
+
+    # 2. 识别季号：第一季 / 第1季 / 2季
+    m = re.search(r"第\s*([0-9０-９一二三四五六七八九十百千两零]+)\s*季", text)
+    if m:
+        s = _cn_int(m.group(1))
+
+    # 3. EP08 / E08 / EP.08 / E01-02
+    m = re.search(r"(?i)[Ee][Pp]?\s*(\d{1,4})(?:-(\d{1,4}))?", text)
+    if m:
+        e = int(m.group(2)) if m.group(2) else int(m.group(1))
+        return s, e
+
+    # 4. 第X集 / 第X话 / 第X期（支持双集打包 如 第01-02集）
+    m = re.search(r"第\s*([0-9０-９一二三四五六七八九十百千两零]+)\s*(?:[-~到至]\s*([0-9０-９一二三四五六七八九十百千两零]+)\s*)?[集话期]", text)
+    if m:
+        e = _cn_int(m.group(2)) if m.group(2) else _cn_int(m.group(1))
+        return s, e
+
+    # 5. 05集 / 12集
+    m = re.search(r"(\d{1,4})\s*(?:[-~到至]\s*(\d{1,4})\s*)?[集话期]", text)
+    if m:
+        e = int(m.group(2)) if m.group(2) else int(m.group(1))
+        return s, e
+
+    # 6. 第一季01-02（季字后直接跟随集数范围）
+    if s is not None:
+        m = re.search(r"(?:季)\s*(\d{1,4})(?:-(\d{1,4}))?", text)
         if m:
-            s = _cn_int(m.group(1))
-        m = re.search(r"[Ee](\d{1,4})", text)
-        if m:
-            e = int(m.group(1))
-        if e is None:
-            m = re.search(r"第\s*([0-9]{1,4}|[一二三四五六七八九十百千两零]+)\s*集", text)
-            if m:
-                e = _cn_int(m.group(1))
+            e = int(m.group(2)) if m.group(2) else int(m.group(1))
+            return s, e
+
     return s, e
 
 

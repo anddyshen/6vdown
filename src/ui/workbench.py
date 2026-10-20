@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from ..models import ParseItem
 from ..pinyin_search import match as py_match
+from ..subscription_engine import sort_episode_groups
 from .icons import star_pixmap
 
 COL_SEL, COL_STAR, COL_TITLE, COL_BLOCK, COL_DATE, COL_MAG, COL_OP = range(7)
@@ -62,104 +63,6 @@ def date_sort_key(d: str):
     except Exception:
         return (9999, 0, 0)
     return (y, mo, dd)
-
-
-_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
-_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
-
-
-def _cn_int(s: str):
-    if not s:
-        return 0
-    if s.isdigit():
-        return int(s)
-    total = 0
-    num = 0
-    for ch in str(s):
-        if ch in _CN_DIGITS:
-            num = _CN_DIGITS[ch]
-        elif ch in _CN_UNITS:
-            unit = _CN_UNITS[ch]
-            total += (num or 1) * unit
-            num = 0
-        else:
-            num = 0
-    return total + num
-
-
-def _ep_meta(name: str):
-    """从组名提取 (季, 集)。如 S01E05 / 第1季第5集 / 第156集。"""
-    text = (name or "").strip()
-    s = e = None
-    m = re.search(r"[Ss](\d{1,3})\s*[Ee](\d{1,4})", text)
-    if m:
-        s, e = int(m.group(1)), int(m.group(2))
-    else:
-        m = re.search(r"第\s*([0-9]{1,3}|[一二三四五六七八九十百千两零]+)\s*季", text)
-        if m:
-            s = _cn_int(m.group(1))
-        m = re.search(r"[Ee](\d{1,4})", text)
-        if m:
-            e = int(m.group(1))
-        if e is None:
-            m = re.search(r"第\s*([0-9]{1,4}|[一二三四五六七八九十百千两零]+)\s*集", text)
-            if m:
-                e = _cn_int(m.group(1))
-    return s, e
-
-
-def sort_episode_groups(groups: dict) -> list:
-    """多集排序：同一季相邻；季号大在前；同季最新一集（集号大）在前；
-    无季号但带集号的按集号倒序；最终尽量保证第一条是“最新一集”。"""
-    items = list(groups.items())
-    metas = [(nm, *_ep_meta(nm)) for nm, _ in items]
-    any_season = any(s is not None for _, s, _ in metas)
-
-    def tier(i):
-        s = metas[i][1]
-        return 0 if s is not None else (1 if any_season else 0)
-
-    def has_num(i):
-        s, e = metas[i][1], metas[i][2]
-        return s is not None or e is not None
-
-    if any_season:
-        # 有季：先按季降序，再按该季集数降序；无季但带集数者随后（集倒序）
-        def key(i):
-            s, e = metas[i][1], metas[i][2]
-            if s is not None:
-                return (0, -s, -(e if e is not None else 0), i)
-            if e is not None:
-                return (1, 0, -e, i)
-            return (2, 0, 0, i)
-    else:
-        def key(i):
-            s, e = metas[i][1], metas[i][2]
-            if e is not None:
-                return (0, -e, i)
-            if s is not None:
-                return (0, 0, i)
-            return (1, 0, i)
-
-    ordered_idx = sorted(range(len(items)), key=key)
-    ordered = [items[i] for i in ordered_idx]
-
-    # 保险：若存在可解析集号且第一条不是“最新候选”，把最新的一条移到最上
-    numbered = [i for i in ordered_idx if has_num(i)]
-    if numbered and ordered_idx:
-        def metric(i):
-            s, e = metas[i][1], metas[i][2]
-            # 有季者优先按季，其次集号；无季按集号（视作较新的连续更新）
-            if s is not None:
-                return (0, s, e if e is not None else 0)
-            return (1, 0, e if e is not None else 0)
-        best = max(numbered, key=metric)
-        first_metric = metric(ordered_idx[0])
-        if metric(best) != first_metric:
-            # 把 best 项移到最前（保持其余相对顺序）
-            ordered = [items[best]] + [items[i] for i in ordered_idx if i != best]
-    return ordered
 
 
 class ClickableLabel(QLabel):
