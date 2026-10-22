@@ -18,10 +18,10 @@ RUN pip install --no-cache-dir -r requirements-server.txt
 COPY src/ /app/src/
 COPY server.py /app/server.py
 
-# 声明挂载卷与端口
+# 声明挂载卷与端口（支持 5080 与 8080）
 VOLUME ["/app/data"]
-EXPOSE 8080
+EXPOSE 5080 8080
 
-# 默认启动命令
-ENTRYPOINT ["python", "server.py", "--host", "0.0.0.0", "--port", "8080"]
+# 默认启动命令（端口由 PORT 环境变量控制，默认 5080）
+ENTRYPOINT ["python", "server.py", "--host", "0.0.0.0"]
 

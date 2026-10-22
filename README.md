@@ -147,24 +147,26 @@ services:
     image: ghcr.io/anddyshen/6vdown:latest
     container_name: 6vdown
     restart: unless-stopped
-    ports:
-      # 宿主机端口(建议5080避开群晖或qB常用的8080) : 容器内部端口(8080)
-      - "5080:8080"
+    # 采用 host 主机网络：容器与群晖处于完全相同的家庭网段，源 IP 即为 NAS 本机 IP
+    # 彻底解决 Transmission/qB 局域网白名单拦截、免密失效与跨网段路由问题
+    network_mode: host
     volumes:
       - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
       - C2DOWN_DATA_DIR=/app/data
+      # 监听端口（Host 模式下直接占用宿主机端口，默认 5080 避开常见 8080 冲突）
+      - PORT=5080
 ```
-4. 点击 **「下一步」** ➔ **「完成」**，群晖将自动拉取镜像并完成启动。
+4. 点击 **「下一步」** ➔ **「完成」**，群晖将自动拉取镜像并完成启动。浏览器访问 `http://<群晖IP>:5080` 即可。
 
 ##### 方式二：Docker 图形化向导手动部署（DSM 6.x / 7.1）
 1. 打开 **Container Manager / Docker** 套件 ➔ 进入 **「注册表」** 搜索并下载 `ghcr.io/anddyshen/6vdown:latest`。
 2. 下载完成后，在 **「映像」** 中选中它，点击 **「运行」**：
+   - **网络设置**：网络模式选择 **「使用与 Docker Host 相同的网络 (host)」**（推荐，与家庭同一网段）；
    - **容器名称**：`6vdown`，勾选 **「启用自动重新启动」**；
-   - **端口设置**：本地端口填写 `5080`（或任意未占用端口），容器端口 `8080`，协议 `TCP`；
    - **存储空间设置**：点击“添加文件夹”，选择群晖上的 `docker/6vdown/data`，装载路径填 `/app/data`；
-   - **环境**：新增环境变量 `TZ` = `Asia/Shanghai`。
+   - **环境**：新增环境变量 `TZ` = `Asia/Shanghai`，`PORT` = `5080`。
 3. 点击 **「下一步」** ➔ **「完成」** 启动容器。
 
 ##### 方式三：SSH 终端命令行部署
@@ -173,9 +175,10 @@ services:
 docker run -d \
   --name 6vdown \
   --restart unless-stopped \
-  -p 5080:8080 \
+  --net=host \
   -v /volume1/docker/6vdown/data:/app/data \
   -e TZ=Asia/Shanghai \
+  -e PORT=5080 \
   ghcr.io/anddyshen/6vdown:latest
 ```
 

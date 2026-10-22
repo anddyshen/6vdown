@@ -4,15 +4,19 @@ services:
   6vdown:
     # 如使用本地源码构建：
     build: .
-    image: 6vdown:latest
+    image: ghcr.io/anddyshen/6vdown:latest
     container_name: 6vdown
     restart: unless-stopped
-    ports:
-      - "8080:8080"
+    # 采用 Host 主机网络：与群晖/家庭局域网处于完全同一网段，出站源 IP 即为 NAS 本机真实 IP
+    network_mode: host
     volumes:
       # 持久化数据目录：数据库与配置文件均存放在当前目录的 data/ 中
       - ./data:/app/data
     environment:
       - TZ=Asia/Shanghai
       - C2DOWN_DATA_DIR=/app/data
+      # 监听端口（Host 模式直接绑定宿主机端口，默认 5080 避开常见 8080 冲突）
+      - PORT=5080
+      # 可选：安全访问令牌（公网暴露时建议设置）
+      - C2DOWN_API_TOKEN=
 
