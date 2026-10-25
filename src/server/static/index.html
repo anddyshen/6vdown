@@ -45,20 +45,38 @@
           <button @click="tab = 'settings'" :class="tabClass('settings')" class="px-3 py-2 rounded-md text-sm font-medium transition">
             ⚙️ 设置
           </button>
-          <button v-if="tokenConfigured" @click="logoutAuth" title="锁定并清除本地登录令牌" class="px-2.5 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded-md transition flex items-center gap-1 border border-slate-700">
-            <span>🔒 锁定</span>
-          </button>
+          <div v-if="authRequired" class="flex items-center space-x-2 pl-2 border-l border-indigo-400">
+            <span class="text-xs text-indigo-100 font-medium hidden sm:inline">👤 {{ currentUser || 'admin' }}</span>
+            <button @click="logoutAuth" title="退出后台登录" class="px-2 py-1 text-xs text-indigo-100 hover:text-white hover:bg-indigo-700 rounded transition border border-indigo-400">
+              退出
+            </button>
+          </div>
         </nav>
       </div>
     </header>
 
+    <!-- 全局浮动提示条 (Fixed Floating Toast - 无论滚动到哪里、无论在弹窗内都始终置顶居中可见) -->
+    <transition
+      enter-active-class="transform transition ease-out duration-300"
+      enter-from-class="-translate-y-8 opacity-0 scale-95"
+      enter-to-class="translate-y-0 opacity-100 scale-100"
+      leave-active-class="transition ease-in duration-200"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="-translate-y-4 opacity-0 scale-95"
+    >
+      <div v-if="notice.show" class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] max-w-lg w-full px-4 pointer-events-none">
+        <div :class="notice.isError ? 'bg-rose-600 text-white shadow-rose-900/40' : 'bg-slate-900 text-white border border-emerald-500/80 shadow-2xl'" class="pointer-events-auto rounded-2xl p-4 shadow-2xl flex items-center justify-between space-x-3 backdrop-blur-lg">
+          <div class="flex items-center space-x-3 truncate">
+            <span class="text-2xl shrink-0">{{ notice.isError ? '❌' : '🎉' }}</span>
+            <div class="text-sm font-medium truncate leading-tight">{{ notice.text }}</div>
+          </div>
+          <button @click="notice.show = false" class="text-white/70 hover:text-white font-bold text-xl px-2 shrink-0">&times;</button>
+        </div>
+      </div>
+    </transition>
+
     <!-- 主体内容 -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full">
-      <!-- 提示消息条 -->
-      <div v-if="notice.show" :class="notice.isError ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-emerald-100 text-emerald-800 border-emerald-300'" class="mb-4 p-3 rounded-lg border text-sm flex justify-between items-center transition shadow-sm">
-        <span>{{ notice.text }}</span>
-        <button @click="notice.show = false" class="font-bold px-2">&times;</button>
-      </div>
 
       <!-- ------------------------------------------------ 工作台 ------------------------------------------------ -->
       <section v-if="tab === 'workbench'" class="space-y-4">
@@ -264,20 +282,32 @@
 
       <!-- ------------------------------------------------ 设置面板 ------------------------------------------------ -->
       <section v-if="tab === 'settings'" class="space-y-6">
-        <!-- 0. API 安全与移动端鉴权 -->
-        <div class="bg-indigo-50 border border-indigo-200 p-5 rounded-xl space-y-3">
+        <!-- 0. 后台账户与安全登录设置 -->
+        <div class="bg-indigo-50 border border-indigo-200 p-5 rounded-xl space-y-4">
           <div class="flex justify-between items-center">
             <div>
               <h3 class="font-bold text-slate-800 text-sm flex items-center">
-                <span class="mr-2">🔐</span> API 安全访问令牌 (Token) 与安卓端直连
+                <span class="mr-2">🔐</span> 后台管理员登录与访问安全
               </h3>
-              <p class="text-xs text-slate-500">当 NAS 通过端口转发暴露至公网时建议开启。开启后安卓手机客户端与外部请求必须携带该 Token。</p>
+              <p class="text-xs text-slate-500">对外网发布或端口映射时，建议设置登录密码。密码留空时为局域网免密模式。</p>
             </div>
-            <span class="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700">公网安全推荐</span>
+            <span class="text-xs font-semibold px-2 py-0.5 rounded" :class="config.web_password ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'">
+              {{ config.web_password ? '已开启密码保护' : '当前局域网免密' }}
+            </span>
           </div>
-          <div class="flex flex-col sm:flex-row gap-3">
-            <input v-model="config.api_token" type="password" placeholder="留空为局域网免密模式；输入自定义 Token 开启安全防护" class="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono" />
-            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow shrink-0">保存安全令牌</button>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">登录用户名</label>
+              <input v-model="config.web_username" type="text" placeholder="默认: admin" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">登录密码</label>
+              <input v-model="config.web_password" type="password" placeholder="留空为免密；输入新密码保存后生效" class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono" />
+            </div>
+          </div>
+          <div class="pt-1 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <span class="text-xs text-slate-400">💡 提示：开启密码后，访问网页必须输入该用户名和密码登录。</span>
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-5 py-2 rounded-lg font-semibold transition shadow shrink-0">保存账户安全配置</button>
           </div>
         </div>
 
@@ -546,20 +576,30 @@
       </div>
     </div>
 
-    <!-- 访问密码/安全令牌验证弹窗 -->
-    <div v-if="authModal.show" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-fadeIn">
-        <div class="text-center space-y-1">
-          <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🔐</div>
-          <h3 class="text-lg font-bold text-slate-800">安全访问验证</h3>
-          <p class="text-xs text-slate-500">服务端已启用访问令牌（Token）保护，请输入令牌以继续访问。</p>
+    <!-- 弹窗：后台用户密码登录 -->
+    <div v-if="loginModal.show" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-5 border border-slate-200 animate-fadeIn">
+        <div class="text-center space-y-1.5">
+          <div class="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto text-2xl font-black shadow-inner">⚡</div>
+          <h3 class="text-xl font-black text-slate-800 tracking-tight">6vdown 影视下载</h3>
+          <p class="text-xs text-slate-500 font-medium">后台管理系统已开启安全保护，请登录后继续</p>
         </div>
-        <div class="space-y-2">
-          <input v-model="authModal.tokenInput" @keyup.enter="submitAuthToken" type="password" placeholder="请输入 API Token / 访问密码..." autofocus class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-center text-slate-800" />
-          <p v-if="authModal.error" class="text-xs text-rose-500 text-center font-medium">{{ authModal.error }}</p>
+
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">用户名</label>
+            <input v-model="loginForm.username" @keyup.enter="submitLogin" type="text" placeholder="例如: admin" autofocus class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 transition" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">登录密码</label>
+            <input v-model="loginForm.password" @keyup.enter="submitLogin" type="password" placeholder="请输入密码..." class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 transition font-mono" />
+          </div>
+          <p v-if="loginForm.error" class="text-xs text-rose-500 text-center font-medium bg-rose-50 py-1.5 rounded-lg border border-rose-200">{{ loginForm.error }}</p>
         </div>
-        <button @click="submitAuthToken" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg text-sm transition shadow">
-          验证并解锁
+
+        <button @click="submitLogin" :disabled="loginForm.loading" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition shadow-lg flex items-center justify-center space-x-1">
+          <span v-if="loginForm.loading" class="animate-spin mr-1">⟳</span>
+          <span>{{ loginForm.loading ? '正在登录...' : '立即登录' }}</span>
         </button>
       </div>
     </div>
@@ -571,68 +611,98 @@
     createApp({
       setup() {
         const tab = ref('workbench');
-        const apiToken = ref(localStorage.getItem('6vdown_api_token') || '');
-        const tokenConfigured = ref(false);
-        const authModal = ref({ show: false, tokenInput: '', error: '' });
+        const authToken = ref(localStorage.getItem('6vdown_token') || localStorage.getItem('6vdown_api_token') || '');
+        const authRequired = ref(false);
+        const currentUser = ref('');
+        const loginModal = ref({ show: false });
+        const loginForm = ref({ username: 'admin', password: '', error: '', loading: false });
 
         async function checkAuthStatus() {
           try {
             const res = await fetch('/api/auth/verify', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token: apiToken.value })
+              body: JSON.stringify({ token: authToken.value })
             }).then(r => r.json());
-            tokenConfigured.value = !!res.token_required;
-            if (res.token_required && !res.ok) {
-              authModal.value.show = true;
-              authModal.value.tokenInput = '';
-              authModal.value.error = '';
+            authRequired.value = !!res.auth_required;
+            if (res.auth_required) {
+              if (res.ok) {
+                currentUser.value = res.username || 'admin';
+                loginModal.value.show = false;
+              } else {
+                loginModal.value.show = true;
+                loginForm.value.password = '';
+                loginForm.value.error = '';
+              }
+            } else {
+              loginModal.value.show = false;
             }
           } catch (e) {
             console.error('Check auth error', e);
           }
         }
 
-        async function submitAuthToken() {
-          const t = authModal.value.tokenInput.trim();
+        async function submitLogin() {
+          if (!loginForm.value.password.trim()) {
+            loginForm.value.error = '请输入登录密码';
+            return;
+          }
+          loginForm.value.loading = true;
+          loginForm.value.error = '';
           try {
-            const res = await fetch('/api/auth/verify', {
+            const res = await fetch('/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token: t })
+              body: JSON.stringify({
+                username: loginForm.value.username.trim(),
+                password: loginForm.value.password
+              })
             }).then(r => r.json());
             if (res.ok) {
-              apiToken.value = t;
-              localStorage.setItem('6vdown_api_token', t);
-              authModal.value.show = false;
-              authModal.value.error = '';
+              authToken.value = res.token;
+              localStorage.setItem('6vdown_token', res.token);
+              currentUser.value = res.username || loginForm.value.username;
+              loginModal.value.show = false;
+              showMsg(`欢迎回来，${currentUser.value}！`);
               initAll();
             } else {
-              authModal.value.error = '访问令牌错误，请重新输入';
+              loginForm.value.error = res.error || '用户名或密码错误';
             }
           } catch (e) {
-            authModal.value.error = '验证请求失败: ' + e;
+            loginForm.value.error = '登录请求失败: ' + e;
+          } finally {
+            loginForm.value.loading = false;
           }
         }
 
-        function logoutAuth() {
-          if (confirm('确定锁定并清除本地已保存的安全令牌吗？')) {
-            apiToken.value = '';
-            localStorage.removeItem('6vdown_api_token');
-            authModal.value.show = true;
-          }
+        async function logoutAuth() {
+          if (!confirm('确定退出当前登录状态吗？')) return;
+          try {
+            await fetch('/api/auth/logout', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: authToken.value })
+            });
+          } catch (e) {}
+          authToken.value = '';
+          currentUser.value = '';
+          localStorage.removeItem('6vdown_token');
+          localStorage.removeItem('6vdown_api_token');
+          loginModal.value.show = true;
+          loginForm.value.password = '';
+          loginForm.value.error = '';
         }
 
         async function authFetch(url, options = {}) {
           options.headers = options.headers || {};
-          if (apiToken.value) {
-            options.headers['X-API-Token'] = apiToken.value;
+          if (authToken.value) {
+            options.headers['X-API-Token'] = authToken.value;
           }
           const res = await fetch(url, options);
           if (res.status === 401) {
-            tokenConfigured.value = true;
-            authModal.value.show = true;
-            authModal.value.error = '当前会话未通过安全验证，请输入访问令牌';
+            authRequired.value = true;
+            loginModal.value.show = true;
+            loginForm.value.error = '会话已过期，请重新登录';
             throw new Error('Unauthorized');
           }
           return res;
@@ -960,23 +1030,29 @@
         }
 
         async function downloadMagnet(url, subId = null, epLabel = '', quality = '') {
+          showMsg('正在向下载器发送任务……');
           try {
             const res = await authFetch('/api/download', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ url, sub_id: subId, ep_label: epLabel, quality })
             }).then(r => r.json());
-            showMsg(res.message || '已成功推送到下载器！');
+            if (res.ok) {
+              showMsg(res.message || '🎉 已成功推送到下载器！');
+            } else {
+              showMsg(res.message || '推送失败，请检查下载器配置', true);
+            }
           } catch (e) {
-            showMsg('推送下载器失败，请检查设置中的下载主机', true);
+            showMsg('推送下载器请求失败，请检查设置中的下载主机', true);
           }
         }
 
         async function downloadAllMissing(up) {
+          showMsg(`开始批量推送 ${up.missing_history.length} 个缺失分集……`);
           for (const m of up.missing_history) {
             await downloadMagnet(m.magnet_url, up.sub_id, m.ep_label, m.quality);
           }
-          showMsg(`已下发全部 ${up.missing_history.length} 个缺失分集！`);
+          showMsg(`🎉 已成功下发全部 ${up.missing_history.length} 个分集！`);
         }
 
         async function doSearch() {
@@ -1008,11 +1084,8 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config.value)
           });
-          if (config.value.api_token) {
-            apiToken.value = config.value.api_token;
-            localStorage.setItem('6vdown_api_token', apiToken.value);
-          }
-          showMsg('配置已保存！');
+          showMsg('配置与安全设置已保存！');
+          checkAuthStatus();
         }
 
         async function testEmby() {
@@ -1045,7 +1118,7 @@
           tab, tabClass, sites, selectedSiteId, switchSite, filterKeyword,
           openLogs, parseStatus, triggerParse, forceFullRefresh, items, filteredItems,
           sortField, sortAsc, toggleSort,
-          authModal, tokenConfigured, submitAuthToken, logoutAuth,
+          loginModal, loginForm, submitLogin, logoutAuth, authRequired, currentUser,
           openItemDetail, quickSubscribe, subs, subUpdates, checkingSubs,
           checkSub, checkAllSubs, deleteSub, downloadMagnet, downloadAllMissing,
           searchKeyword, searching, searchResults, doSearch, config, hosts,

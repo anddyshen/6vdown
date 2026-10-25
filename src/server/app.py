@@ -50,6 +50,11 @@ class EmbyTestRequest(BaseModel):
     api_key: str
 
 
+class LoginRequest(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
 class VerifyRequest(BaseModel):
     token: str = ""
 
@@ -68,18 +73,39 @@ def create_app() -> FastAPI:
 
     # 全局服务实例
     service = ServerService()
+    active_sessions: set[str] = set()
 
-    # 安全鉴权中间件（当配置了 api_token 或环境变量时强制校验）
+    def _get_auth_creds():
+        username = (
+            os.environ.get("C2DOWN_WEB_USERNAME")
+            or os.environ.get("C2DOWN_USERNAME")
+            or service.cfg.get("web_username")
+            or "admin"
+        ).strip()
+        password = (
+            os.environ.get("C2DOWN_WEB_PASSWORD")
+            or os.environ.get("C2DOWN_PASSWORD")
+            or service.cfg.get("web_password")
+            or ""
+        ).strip()
+        api_token = (
+            os.environ.get("C2DOWN_API_TOKEN")
+            or service.cfg.get("api_token")
+            or ""
+        ).strip()
+        return username, password, api_token
+
+    # 安全鉴权中间件（当配置了密码/Token 或环境变量时强制校验）
     @app.middleware("http")
     async def token_auth_middleware(request, call_next):
         path = request.url.path
-        # 静态资源、根路径和鉴权校验接口放行
-        if not path.startswith("/api/") or path == "/api/auth/verify":
+        # 静态资源、根路径和鉴权登录接口放行
+        if not path.startswith("/api/") or path in ("/api/auth/verify", "/api/auth/login", "/api/auth/logout"):
             return await call_next(request)
 
-        configured_token = os.environ.get("C2DOWN_API_TOKEN") or service.cfg.get("api_token", "")
-        if not configured_token:
-            # 未配置 Token 则默认局域网免密放行
+        username, password, api_token = _get_auth_creds()
+        auth_required = bool(password or api_token)
+        if not auth_required:
             return await call_next(request)
 
         # 获取请求携带的 Token：优先 X-API-Token，其次 Bearer Token，再次 URL 参数 ?token=
@@ -91,25 +117,69 @@ def create_app() -> FastAPI:
         if not token:
             token = request.query_params.get("token") or ""
 
-        if token != configured_token:
+        is_valid = False
+        if token:
+            if token in active_sessions:
+                is_valid = True
+            elif api_token and token == api_token:
+                is_valid = True
+            elif password and token == password:
+                is_valid = True
+
+        if not is_valid:
             from fastapi.responses import JSONResponse
             return JSONResponse(
                 status_code=401,
-                content={"ok": False, "error": "Unauthorized: API Token 无效或未提供"},
+                content={"ok": False, "error": "Unauthorized: 未授权访问，请先登录后台"},
             )
 
         return await call_next(request)
 
-    # ------------------------------------------------------------ 状态与全局
+    # ------------------------------------------------------------ 鉴权与登录接口
+    @app.post("/api/auth/login")
+    def auth_login(req: LoginRequest):
+        username, password, api_token = _get_auth_creds()
+        auth_required = bool(password or api_token)
+        if not auth_required:
+            return {"ok": True, "token": "anonymous", "username": username or "admin", "auth_required": False}
+
+        # 校验用户名与密码
+        match_user = (req.username.strip() == username) or (not password and api_token)
+        match_pass = (password and req.password == password) or (api_token and req.password == api_token)
+        if match_user and match_pass:
+            import secrets
+            session_token = secrets.token_hex(24)
+            active_sessions.add(session_token)
+            return {"ok": True, "token": session_token, "username": username, "auth_required": True}
+        return {"ok": False, "error": "用户名或密码错误", "auth_required": True}
+
     @app.post("/api/auth/verify")
     def verify_auth(req: Optional[VerifyRequest] = None):
-        configured_token = os.environ.get("C2DOWN_API_TOKEN") or service.cfg.get("api_token", "")
-        if not configured_token:
-            return {"ok": True, "token_required": False, "version": "1.0.4"}
+        username, password, api_token = _get_auth_creds()
+        auth_required = bool(password or api_token)
+        if not auth_required:
+            return {"ok": True, "auth_required": False, "token_required": False, "version": "1.0.4"}
+
         token = (req.token if req else "") or ""
-        if token == configured_token:
-            return {"ok": True, "token_required": True, "version": "1.0.4"}
-        return {"ok": False, "token_required": True, "error": "API Token 不匹配"}
+        is_valid = False
+        if token:
+            if token in active_sessions or (api_token and token == api_token) or (password and token == password):
+                is_valid = True
+
+        return {
+            "ok": is_valid,
+            "auth_required": True,
+            "token_required": True,
+            "username": username if is_valid else "",
+            "version": "1.0.4",
+        }
+
+    @app.post("/api/auth/logout")
+    def auth_logout(req: Optional[VerifyRequest] = None):
+        token = (req.token if req else "") or ""
+        if token in active_sessions:
+            active_sessions.discard(token)
+        return {"ok": True}
 
     @app.get("/api/status")
     def get_status():

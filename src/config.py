@@ -52,8 +52,10 @@ DEFAULTS = {
     "search_concurrency": 2,       # 跨站点并发数
     "search_history_size": 20,     # 历史关键词保留条数
     "search_auto_detail": 8,       # 搜索后自动抓取前 N 条详情页资源（0 = 关闭）
-    # API 安全与移动端鉴权（公网暴露时必填，空则允许局域网免密访问）
+    # API 安全与后台账户鉴权（公网暴露时必填，空则允许局域网免密访问）
     "api_token": "",               # 自定义安全令牌 (X-API-Token)
+    "web_username": "admin",       # 后台登录用户名（默认 admin）
+    "web_password": "",            # 后台登录密码（留空表示局域网免密）
 }
 
 

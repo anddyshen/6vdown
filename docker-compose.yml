@@ -17,6 +17,9 @@ services:
       - C2DOWN_DATA_DIR=/app/data
       # 监听端口（Host 模式直接绑定宿主机端口，默认 5080 避开常见 8080 冲突）
       - PORT=5080
-      # 可选：安全访问令牌（公网暴露时建议设置）
+      # 后台管理员登录账号与密码（外网暴露时建议设置；也可启动后在 Web 设置页中修改）
+      - C2DOWN_WEB_USERNAME=admin
+      - C2DOWN_WEB_PASSWORD=
+      # 可选：安全访问令牌（供第三方脚本或移动端免密访问）
       - C2DOWN_API_TOKEN=
 

@@ -82,13 +82,18 @@ class TestServerService(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_token_auth_logic(self):
-        from src.server.app import create_app, VerifyRequest
+        from src.server.app import create_app, VerifyRequest, LoginRequest
         app = create_app()
         verify_route = [r for r in app.routes if getattr(r, "path", "") == "/api/auth/verify"][0]
-        # 默认无 token 状态
+        login_route = [r for r in app.routes if getattr(r, "path", "") == "/api/auth/login"][0]
+        # 默认无密码状态
         res = verify_route.endpoint(VerifyRequest(token=""))
         self.assertTrue(res["ok"])
         self.assertFalse(res["token_required"])
+
+        # 默认免密登录直接放行
+        login_res = login_route.endpoint(LoginRequest(username="admin", password=""))
+        self.assertTrue(login_res["ok"])
 
 
 if __name__ == "__main__":
