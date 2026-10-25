@@ -1209,18 +1209,19 @@
         async function downloadMagnet(url, subId = null, epLabel = '', quality = '') {
           showMsg('正在向下载器发送任务……');
           try {
-            const res = await authFetch('/api/download', {
+            const resp = await authFetch('/api/download', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ url, sub_id: subId, ep_label: epLabel, quality })
-            }).then(r => r.json());
-            if (res.ok) {
+            });
+            const res = await resp.json().catch(() => ({}));
+            if (resp.ok && res.ok) {
               showMsg(res.message || '🎉 已成功推送到下载器！');
             } else {
-              showMsg(res.message || '推送失败，请检查下载器配置', true);
+              showMsg(res.detail || res.message || '推送失败，请检查下载器配置或日志', true);
             }
           } catch (e) {
-            showMsg('推送下载器请求失败，请检查设置中的下载主机', true);
+            showMsg('请求发送异常：' + (e.message || '请检查网络或后端日志'), true);
           }
         }
 

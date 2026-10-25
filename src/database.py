@@ -733,7 +733,11 @@ class Database:
                 (sub.title, sub.detail_url, sub.status or "active", sub.last_ep or "",
                  sub.emby_series_id or "", sub.created_at or now, now, site_key),
             )
-            return int(cur.lastrowid or 0)
+            sub_id = int(cur.lastrowid or 0)
+            if not sub_id:
+                row = c.execute("SELECT id FROM subscriptions WHERE detail_url=?", (sub.detail_url,)).fetchone()
+                sub_id = int(row["id"]) if row else 0
+            return sub_id
 
     def list_subscriptions(self, status: str = "") -> list[Subscription]:
         with self._lock, self._conn() as c:
@@ -797,6 +801,10 @@ class Database:
                    VALUES(?,?,?,?,?)""",
                 (sub_id, episode_label, magnet_url, quality, now_ms()),
             )
+
+    # 兼容别名
+    get_pushed_labels = get_pushed_episodes
+    record_subscription_push = record_pushed_magnet
 
 
 

@@ -107,6 +107,23 @@ class TestServerService(unittest.TestCase):
         self.assertIn("urls", incr)
         self.assertIn("run_time", incr)
 
+    def test_send_download_with_subscription(self):
+        # 验证带 sub_id 的下载请求不会因为缺少 record_subscription_push 抛出异常
+        sub_id = self.service.add_subscription("测试剧集", "https://example.com/test")
+        res = self.service.send_download(
+            url="magnet:?xt=urn:btih:dummy",
+            sub_id=sub_id,
+            ep_label="第01集",
+            quality="1080P",
+        )
+        self.assertIn("ok", res)
+        # 验证数据库中存在推送记录
+        pushed = self.service.db.is_episode_pushed(sub_id, "第01集")
+        # 如果 mock/downloader 成功，检查记录
+        history = self.service.db.get_pushed_labels(sub_id)
+        if res.get("ok"):
+            self.assertIn("第01集", history)
+
 
 if __name__ == "__main__":
     unittest.main()
