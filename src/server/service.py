@@ -42,6 +42,13 @@ class ServerService:
         self._is_parsing = False
         self._parse_logs: list[str] = []
         self._parse_summary: dict = {}
+        self._latest_incremental: dict = {
+            "run_time": "",
+            "is_scheduled": False,
+            "new_count": 0,
+            "updated_count": 0,
+            "urls": [],
+        }
 
         self._scheduler: Optional[BackgroundScheduler] = None
         self._init_scheduler()
@@ -58,9 +65,22 @@ class ServerService:
                 id="sub_check_job",
                 replace_existing=True,
             )
-            if self.cfg.get("sub_scheduler_enabled", True):
+            # 定时自动解析（默认每 2 小时自动抓取一次全站增量）
+            parse_hours = max(1, int(self.cfg.get("parse_interval_hours", 2) or 2))
+            self._scheduler.add_job(
+                self.run_scheduled_parse,
+                "interval",
+                hours=parse_hours,
+                id="site_parse_job",
+                replace_existing=True,
+            )
+            if self.cfg.get("sub_scheduler_enabled", True) or self.cfg.get("parse_enabled", True):
                 self._scheduler.start()
-                log.info("ServerService 周期检查调度器已启动（每 %d 小时检查一次）", interval_hours)
+                log.info(
+                    "ServerService 周期调度器已启动（追剧巡检: %d 小时，定时解析: %d 小时）",
+                    interval_hours,
+                    parse_hours,
+                )
         except Exception as e:
             log.warning("启动定时调度器失败: %s", e)
 
@@ -73,14 +93,28 @@ class ServerService:
             job = self._scheduler.get_job("sub_check_job")
             if job:
                 job.reschedule("interval", hours=interval_hours)
-            enabled = self.cfg.get("sub_scheduler_enabled", True)
-            if enabled and not self._scheduler.running:
+
+            parse_hours = max(1, int(self.cfg.get("parse_interval_hours", 2) or 2))
+            pjob = self._scheduler.get_job("site_parse_job")
+            if pjob:
+                pjob.reschedule("interval", hours=parse_hours)
+
+            sub_enabled = self.cfg.get("sub_scheduler_enabled", True)
+            parse_enabled = self.cfg.get("parse_enabled", True)
+            any_enabled = sub_enabled or parse_enabled
+
+            if any_enabled and not self._scheduler.running:
                 self._scheduler.start()
-            elif not enabled and self._scheduler.running:
+            elif not any_enabled and self._scheduler.running:
                 self._scheduler.pause()
-            log.info("调度器重载成功，启用状态: %s，周期: %d 小时", enabled, interval_hours)
+            log.info("调度器重载成功，启用状态: %s，追剧周期: %d 小时，解析周期: %d 小时", any_enabled, interval_hours, parse_hours)
         except Exception as e:
             log.warning("重载调度器异常: %s", e)
+
+    def run_scheduled_parse(self) -> None:
+        """后台定时自动解析。"""
+        log.info("后台触发定时自动解析任务……")
+        self.start_parse(is_scheduled=True)
 
     # ------------------------------------------------------------ 解析工作台
     def get_sites(self) -> list[dict]:
@@ -155,7 +189,9 @@ class ServerService:
             for it in items
         ]
 
-    def start_parse(self, site_ids: Optional[list[int]] = None) -> bool:
+    def start_parse(
+        self, site_ids: Optional[list[int]] = None, is_scheduled: bool = False
+    ) -> bool:
         """异步启动解析任务。"""
         with self._parse_lock:
             if self._is_parsing:
@@ -181,9 +217,31 @@ class ServerService:
                     concurrency=int(self.cfg.get("detail_concurrency", 2) or 1),
                 )
                 self._parse_summary = res
+                new_urls = list(res.get("new_urls", []))
+                updated_urls = list(res.get("updated_urls", []))
+                all_incr = list(set(new_urls + updated_urls))
+                self._latest_incremental = {
+                    "run_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "is_scheduled": is_scheduled,
+                    "new_count": res.get("new", 0),
+                    "updated_count": res.get("updated", 0),
+                    "urls": all_incr,
+                }
                 log_cb(f"解析完成！获取新资源: {res.get('new', 0)} 条，更新: {res.get('updated', 0)} 条。")
+                self.db.add_operation_log(
+                    category="parse",
+                    action="定时自动解析" if is_scheduled else "手动站点解析",
+                    detail=f"命中 {res.get('total', 0)} 条，新增入库 {res.get('new', 0)} 条，分集更新 {res.get('updated', 0)} 条",
+                    status="success" if res.get("ok") else "fail",
+                )
             except Exception as e:
                 log_cb(f"[错误] 解析发生异常: {e}")
+                self.db.add_operation_log(
+                    category="parse",
+                    action="定时自动解析" if is_scheduled else "手动站点解析",
+                    detail=f"解析异常: {e}",
+                    status="fail",
+                )
             finally:
                 with self._parse_lock:
                     self._is_parsing = False
@@ -191,6 +249,9 @@ class ServerService:
         t = threading.Thread(target=_runner, daemon=True, name="WebParseWorker")
         t.start()
         return True
+
+    def get_latest_incremental(self) -> dict:
+        return dict(self._latest_incremental)
 
     def get_parse_status(self) -> dict:
         with self._parse_lock:
@@ -424,10 +485,25 @@ class ServerService:
             up = self._check_one_sub(sub, emby_cli, priority, auto_download=auto_download)
             if up:
                 updates.append(up)
+        if updates:
+            titles = "、".join(f"《{u['title']}》" for u in updates[:3])
+            self.db.add_operation_log(
+                category="subscription",
+                action="追剧周期巡检",
+                detail=f"巡检完成，发现 {len(updates)} 部剧集有新更新（{titles} 等）",
+                status="info",
+            )
         return updates
 
     # ------------------------------------------------------------ 发送下载
-    def send_download(self, url: str, host_id: Optional[int] = None, sub_id: Optional[int] = None, ep_label: str = "", quality: str = "") -> dict:
+    def send_download(
+        self,
+        url: str,
+        host_id: Optional[int] = None,
+        sub_id: Optional[int] = None,
+        ep_label: str = "",
+        quality: str = "",
+    ) -> dict:
         host = None
         if host_id:
             hosts = [h for h in self.db.list_hosts() if h.id == host_id]
@@ -436,6 +512,29 @@ class ServerService:
         res = self.downloader.send(url, host=host)
         if res.ok and sub_id:
             self.db.record_subscription_push(sub_id, ep_label, url, quality)
+
+        active_host = host or self.db.active_host()
+        h_name = active_host.name if active_host else "默认下载器"
+        h_type = active_host.type if active_host else ""
+
+        from ..models import TaskRecord
+        self.db.add_task(
+            TaskRecord(
+                title=f"{ep_label} ({quality})" if ep_label else (url[:50] + "..."),
+                link=url,
+                source="web",
+                host_name=h_name,
+                host_type=h_type,
+                status="success" if res.ok else "fail",
+                message=res.message,
+            )
+        )
+        self.db.add_operation_log(
+            category="download",
+            action="推送到下载器",
+            detail=f"{ep_label or '影视资源'} ({quality or '默认'}) -> 目标主机: {h_name} [{h_type}] | 结果: {res.message}",
+            status="success" if res.ok else "fail",
+        )
         return {"ok": res.ok, "message": res.message}
 
     # ------------------------------------------------------------ 设置与连通性
@@ -445,6 +544,13 @@ class ServerService:
     def update_config(self, patch: dict) -> dict:
         self.cfg.update(patch)
         self.reload_scheduler()
+        keys_str = ", ".join(patch.keys())
+        self.db.add_operation_log(
+            category="system",
+            action="修改系统配置",
+            detail=f"已更新配置项: {keys_str}",
+            status="info",
+        )
         return self.cfg.all()
 
     def test_emby(self, server_url: str, api_key: str) -> dict:
@@ -530,4 +636,10 @@ class ServerService:
     def reset_cache(self) -> bool:
         """清空抓取缓存数据。"""
         self.db.clear_parse_data()
+        self.db.add_operation_log(
+            category="system",
+            action="重置抓取缓存",
+            detail="已清空全部历史站点解析缓存数据",
+            status="info",
+        )
         return True

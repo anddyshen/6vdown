@@ -42,6 +42,9 @@
           <button @click="tab = 'search'" :class="tabClass('search')" class="px-3 py-2 rounded-md text-sm font-medium transition">
             🔍 跨站搜索
           </button>
+          <button @click="openLogsTab" :class="tabClass('logs')" class="px-3 py-2 rounded-md text-sm font-medium transition">
+            📜 操作日志
+          </button>
           <button @click="tab = 'settings'" :class="tabClass('settings')" class="px-3 py-2 rounded-md text-sm font-medium transition">
             ⚙️ 设置
           </button>
@@ -81,25 +84,67 @@
       <!-- ------------------------------------------------ 工作台 ------------------------------------------------ -->
       <section v-if="tab === 'workbench'" class="space-y-4">
         <!-- 控制栏 -->
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-3 items-center justify-between">
-          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
-            <span class="text-sm font-semibold text-slate-600">当前解析源:</span>
-            <select v-model="selectedSiteId" @change="switchSite" class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 outline-none">
-              <option v-for="s in sites" :key="s.id" :value="s.id">{{ s.name }} {{ s.is_current ? '（默认）' : '' }}</option>
-            </select>
-            <input v-model="filterKeyword" type="text" placeholder="快速过滤当前条目..." class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 w-48 sm:w-64" />
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+          <div class="flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+              <span class="text-sm font-semibold text-slate-600">当前解析源:</span>
+              <select v-model="selectedSiteId" @change="switchSite" class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                <option v-for="s in sites" :key="s.id" :value="s.id">{{ s.name }} {{ s.is_current ? '（默认）' : '' }}</option>
+              </select>
+              <input v-model="filterKeyword" type="text" placeholder="快速过滤当前条目..." class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 w-48 sm:w-64" />
+            </div>
+
+            <div class="flex items-center space-x-2">
+              <button @click="openLogs = !openLogs" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 hover:bg-slate-50 transition">
+                📜 控制台日志 <span v-if="parseStatus.is_parsing" class="animate-pulse text-amber-500 font-bold">● 运行中</span>
+              </button>
+              <button @click="forceFullRefresh" :disabled="parseStatus.is_parsing" title="清空现有抓取记录，从源站重新获取全部最新条目" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition flex items-center space-x-1">
+                <span>🔄 重新抓取</span>
+              </button>
+              <button @click="triggerParse" :disabled="parseStatus.is_parsing" class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium px-4 py-1.5 rounded-lg text-sm shadow transition flex items-center space-x-1">
+                <span v-if="parseStatus.is_parsing" class="animate-spin mr-1">⟳</span>
+                <span>{{ parseStatus.is_parsing ? '正在抓取...' : '🚀 开始解析' }}</span>
+              </button>
+            </div>
           </div>
 
+          <!-- 区块多选选择器（默认全选） -->
+          <div v-if="availableBlocksList.length" class="flex items-center flex-wrap gap-1.5 pt-3 border-t border-slate-100 text-xs">
+            <span class="font-bold text-slate-600 mr-1 flex items-center">
+              🏷️ 栏目区块:
+            </span>
+            <button @click="toggleAllBlocks" class="px-2.5 py-1 rounded-lg border transition font-bold" :class="isAllBlocksSelected ? 'bg-indigo-100 border-indigo-300 text-indigo-700' : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200'">
+              {{ isAllBlocksSelected ? '全部取消' : '全部选择' }}
+            </button>
+            <button
+              v-for="b in availableBlocksList"
+              :key="b.name"
+              @click="toggleBlock(b.name)"
+              class="px-2.5 py-1 rounded-full border transition flex items-center space-x-1 select-none"
+              :class="selectedBlocks.includes(b.name) ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm font-semibold' : 'bg-slate-100 border-slate-200 text-slate-400 hover:bg-slate-200'"
+            >
+              <span>{{ b.name }}</span>
+              <span class="text-[10px] opacity-80 px-1 rounded-full" :class="selectedBlocks.includes(b.name) ? 'bg-white/20' : 'bg-slate-200 text-slate-600'">{{ b.count }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 最新定时增量更新提示横幅 -->
+        <div v-if="latestIncremental.urls && latestIncremental.urls.length" class="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-3.5 shadow-sm flex flex-wrap justify-between items-center gap-3">
+          <div class="flex items-center space-x-2.5">
+            <span class="text-2xl">🔔</span>
+            <div>
+              <div class="font-bold text-slate-800 text-sm">
+                最近一次{{ latestIncremental.is_scheduled ? '【定时自动解析】' : '【站点解析】' }}发现
+                <span class="text-emerald-700 font-extrabold">{{ latestIncremental.new_count }}</span> 条新入库，
+                <span class="text-amber-700 font-extrabold">{{ latestIncremental.updated_count }}</span> 条更新！
+              </div>
+              <div class="text-xs text-slate-500">完成于 {{ latestIncremental.run_time }}</div>
+            </div>
+          </div>
           <div class="flex items-center space-x-2">
-            <button @click="openLogs = !openLogs" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 hover:bg-slate-50 transition">
-              📜 控制台日志 <span v-if="parseStatus.is_parsing" class="animate-pulse text-amber-500 font-bold">● 运行中</span>
-            </button>
-            <button @click="forceFullRefresh" :disabled="parseStatus.is_parsing" title="清空现有抓取记录，从源站重新获取全部最新条目" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition flex items-center space-x-1">
-              <span>🔄 重新抓取</span>
-            </button>
-            <button @click="triggerParse" :disabled="parseStatus.is_parsing" class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium px-4 py-1.5 rounded-lg text-sm shadow transition flex items-center space-x-1">
-              <span v-if="parseStatus.is_parsing" class="animate-spin mr-1">⟳</span>
-              <span>{{ parseStatus.is_parsing ? '正在抓取...' : '🚀 开始解析' }}</span>
+            <button @click="showOnlyIncremental = !showOnlyIncremental" class="px-3.5 py-1.5 rounded-lg text-xs font-bold transition shadow" :class="showOnlyIncremental ? 'bg-amber-600 text-white' : 'bg-white border border-amber-300 text-amber-800 hover:bg-amber-50'">
+              {{ showOnlyIncremental ? '✓ 正在只看最新增量 (点击恢复全部)' : '⚡ 只看本次增量 (' + latestIncremental.urls.length + ' 条)' }}
             </button>
           </div>
         </div>
@@ -277,6 +322,72 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------ 操作日志 ------------------------------------------------ -->
+      <section v-if="tab === 'logs'" class="space-y-4">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-3 items-center justify-between">
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <span class="text-sm font-semibold text-slate-600">日志分类:</span>
+            <button @click="logCategory = ''; loadLogs()" class="px-3 py-1.5 text-xs rounded-lg font-semibold transition" :class="!logCategory ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
+              全部
+            </button>
+            <button @click="logCategory = 'download'; loadLogs()" class="px-3 py-1.5 text-xs rounded-lg font-semibold transition" :class="logCategory === 'download' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
+              📥 下载记录
+            </button>
+            <button @click="logCategory = 'parse'; loadLogs()" class="px-3 py-1.5 text-xs rounded-lg font-semibold transition" :class="logCategory === 'parse' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
+              🔄 站点解析
+            </button>
+            <button @click="logCategory = 'subscription'; loadLogs()" class="px-3 py-1.5 text-xs rounded-lg font-semibold transition" :class="logCategory === 'subscription' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
+              📺 追剧巡检
+            </button>
+            <button @click="logCategory = 'system'; loadLogs()" class="px-3 py-1.5 text-xs rounded-lg font-semibold transition" :class="logCategory === 'system' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
+              ⚙️ 系统操作
+            </button>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <input v-model="logKeyword" @keyup.enter="loadLogs" type="text" placeholder="搜索日志内容..." class="bg-slate-100 border border-slate-300 text-xs rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 w-40 sm:w-48" />
+            <button @click="loadLogs" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition">刷新</button>
+            <button @click="clearLogs" class="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-semibold transition">清空日志</button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+              <thead class="bg-slate-50 text-slate-500 text-left">
+                <tr>
+                  <th class="py-3 px-4 font-semibold w-44">时间</th>
+                  <th class="py-3 px-3 font-semibold w-28">分类</th>
+                  <th class="py-3 px-3 font-semibold w-36">操作动作</th>
+                  <th class="py-3 px-3 font-semibold">详细说明</th>
+                  <th class="py-3 px-4 font-semibold w-24 text-center">状态</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 text-xs">
+                <tr v-for="l in systemLogs" :key="l.id" class="hover:bg-slate-50 transition">
+                  <td class="py-3 px-4 text-slate-500 font-mono whitespace-nowrap">{{ formatTime(l.created_at) }}</td>
+                  <td class="py-3 px-3">
+                    <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="categoryBadge(l.category)">
+                      {{ categoryName(l.category) }}
+                    </span>
+                  </td>
+                  <td class="py-3 px-3 font-medium text-slate-800">{{ l.action }}</td>
+                  <td class="py-3 px-3 text-slate-600 break-all">{{ l.detail }}</td>
+                  <td class="py-3 px-4 text-center">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-bold" :class="l.status === 'success' || l.status === 'ok' ? 'bg-emerald-100 text-emerald-800' : (l.status === 'fail' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700')">
+                      {{ l.status === 'success' || l.status === 'ok' ? '成功' : (l.status === 'fail' ? '失败' : '提示') }}
+                    </span>
+                  </td>
+                </tr>
+                <tr v-if="!systemLogs.length">
+                  <td colspan="5" class="py-12 text-center text-slate-400">暂无相关操作日志记录</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -878,9 +989,61 @@
           loadWorkbench();
         }
 
+        const selectedBlocks = ref([]);
+        const showOnlyIncremental = ref(false);
+        const latestIncremental = ref({ run_time: '', is_scheduled: false, new_count: 0, updated_count: 0, urls: [] });
+
+        const availableBlocksList = computed(() => {
+          const counts = {};
+          for (const it of items.value) {
+            const b = it.block || '其他';
+            counts[b] = (counts[b] || 0) + 1;
+          }
+          return Object.keys(counts).map(k => ({ name: k, count: counts[k] }));
+        });
+
+        const isAllBlocksSelected = computed(() => {
+          if (!availableBlocksList.value.length) return true;
+          return selectedBlocks.value.length === availableBlocksList.value.length;
+        });
+
+        function toggleAllBlocks() {
+          if (isAllBlocksSelected.value) {
+            selectedBlocks.value = [];
+          } else {
+            selectedBlocks.value = availableBlocksList.value.map(b => b.name);
+          }
+        }
+
+        function toggleBlock(name) {
+          const idx = selectedBlocks.value.indexOf(name);
+          if (idx >= 0) {
+            selectedBlocks.value.splice(idx, 1);
+          } else {
+            selectedBlocks.value.push(name);
+          }
+        }
+
         async function loadWorkbench() {
           const res = await authFetch('/api/workbench').then(r => r.json());
           items.value = res;
+          if (!selectedBlocks.value.length && res.length) {
+            const set = new Set();
+            for (const it of res) {
+              if (it.block) set.add(it.block);
+            }
+            selectedBlocks.value = Array.from(set);
+          }
+          loadIncremental();
+        }
+
+        async function loadIncremental() {
+          try {
+            const res = await authFetch('/api/workbench/incremental').then(r => r.json());
+            if (res && res.urls && res.urls.length) {
+              latestIncremental.value = res;
+            }
+          } catch (e) {}
         }
 
         const sortField = ref('date');
@@ -901,6 +1064,20 @@
             const k = filterKeyword.value.trim().toLowerCase();
             list = list.filter(it => (it.title && it.title.toLowerCase().includes(k)) || (it.desc && it.desc.toLowerCase().includes(k)));
           }
+
+          // 区块筛选：仅显示勾选的区块，未勾选的不显示
+          if (selectedBlocks.value && selectedBlocks.value.length) {
+            list = list.filter(it => !it.block || selectedBlocks.value.includes(it.block));
+          } else {
+            list = [];
+          }
+
+          // 最新增量筛选
+          if (showOnlyIncremental.value && latestIncremental.value.urls && latestIncremental.value.urls.length) {
+            const incrSet = new Set(latestIncremental.value.urls);
+            list = list.filter(it => incrSet.has(it.detail_url));
+          }
+
           const field = sortField.value;
           const asc = sortAsc.value;
           return [...list].sort((a, b) => {
@@ -1102,6 +1279,63 @@
           showMsg('链接已复制到剪贴板！');
         }
 
+        // 操作日志相关
+        const systemLogs = ref([]);
+        const logCategory = ref('');
+        const logKeyword = ref('');
+
+        async function loadLogs() {
+          try {
+            const q = new URLSearchParams();
+            if (logCategory.value) q.append('category', logCategory.value);
+            if (logKeyword.value) q.append('keyword', logKeyword.value);
+            q.append('limit', '200');
+            const res = await authFetch(`/api/logs?${q.toString()}`).then(r => r.json());
+            systemLogs.value = res.logs || [];
+          } catch (e) {
+            console.error('Failed to load logs', e);
+          }
+        }
+
+        async function clearLogs() {
+          if (!confirm('确定清空所有操作日志记录吗？')) return;
+          await authFetch('/api/logs/clear', { method: 'POST' });
+          systemLogs.value = [];
+          showMsg('操作日志已清空！');
+        }
+
+        function openLogsTab() {
+          tab.value = 'logs';
+          loadLogs();
+        }
+
+        function formatTime(ts) {
+          if (!ts) return '';
+          const d = new Date(Number(ts));
+          const pad = n => String(n).padStart(2, '0');
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        function categoryBadge(cat) {
+          switch (cat) {
+            case 'download': return 'bg-emerald-100 text-emerald-800';
+            case 'parse': return 'bg-indigo-100 text-indigo-800';
+            case 'subscription': return 'bg-amber-100 text-amber-800';
+            case 'system': return 'bg-slate-200 text-slate-800';
+            default: return 'bg-slate-100 text-slate-700';
+          }
+        }
+
+        function categoryName(cat) {
+          switch (cat) {
+            case 'download': return '📥 下载';
+            case 'parse': return '🔄 解析';
+            case 'subscription': return '📺 追剧';
+            case 'system': return '⚙️ 系统';
+            default: return cat || '记录';
+          }
+        }
+
         function initAll() {
           loadSites();
           loadWorkbench();
@@ -1118,6 +1352,10 @@
           tab, tabClass, sites, selectedSiteId, switchSite, filterKeyword,
           openLogs, parseStatus, triggerParse, forceFullRefresh, items, filteredItems,
           sortField, sortAsc, toggleSort,
+          selectedBlocks, availableBlocksList, isAllBlocksSelected, toggleAllBlocks, toggleBlock,
+          latestIncremental, showOnlyIncremental,
+          systemLogs, logCategory, logKeyword, loadLogs, clearLogs, openLogsTab,
+          formatTime, categoryBadge, categoryName,
           loginModal, loginForm, submitLogin, logoutAuth, authRequired, currentUser,
           openItemDetail, quickSubscribe, subs, subUpdates, checkingSubs,
           checkSub, checkAllSubs, deleteSub, downloadMagnet, downloadAllMissing,

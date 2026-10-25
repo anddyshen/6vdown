@@ -95,6 +95,18 @@ class TestServerService(unittest.TestCase):
         login_res = login_route.endpoint(LoginRequest(username="admin", password=""))
         self.assertTrue(login_res["ok"])
 
+    def test_operation_logs_and_incremental(self):
+        # 1. 测试记录并读取操作日志
+        self.service.db.add_operation_log("download", "推送到下载器", "测试下载任务", "success")
+        logs = self.service.db.list_operation_logs(limit=10)
+        self.assertGreaterEqual(len(logs), 1)
+        self.assertEqual(logs[0]["category"], "download")
+
+        # 2. 测试增量信息初始状态
+        incr = self.service.get_latest_incremental()
+        self.assertIn("urls", incr)
+        self.assertIn("run_time", incr)
+
 
 if __name__ == "__main__":
     unittest.main()

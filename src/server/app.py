@@ -220,6 +220,10 @@ def create_app() -> FastAPI:
     def parse_status():
         return service.get_parse_status()
 
+    @app.get("/api/workbench/incremental")
+    def get_incremental():
+        return service.get_latest_incremental()
+
     @app.post("/api/workbench/detail")
     def fetch_detail(req: DetailRequest):
         res = service.fetch_item_detail(req.detail_url, req.module_id)
@@ -306,6 +310,16 @@ def create_app() -> FastAPI:
     @app.post("/api/settings/reset_cache")
     def reset_cache():
         return {"ok": service.reset_cache()}
+
+    # ------------------------------------------------------------ 系统与操作日志
+    @app.get("/api/logs")
+    def get_logs(category: str = "", keyword: str = "", limit: int = 200):
+        return {"ok": True, "logs": service.db.list_operation_logs(limit=limit, category=category, keyword=keyword)}
+
+    @app.post("/api/logs/clear")
+    def clear_logs():
+        service.db.clear_operation_logs()
+        return {"ok": True}
 
     # ------------------------------------------------------------ 前端静态页面与 PWA
     STATIC_DIR.mkdir(parents=True, exist_ok=True)

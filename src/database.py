@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS task_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at INTEGER, title TEXT, link TEXT, source TEXT,
   host_name TEXT, host_type TEXT, status TEXT, message TEXT);
+CREATE TABLE IF NOT EXISTS operation_logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at INTEGER, category TEXT DEFAULT 'system',
+  action TEXT DEFAULT '', detail TEXT DEFAULT '',
+  status TEXT DEFAULT 'ok', operator TEXT DEFAULT 'admin');
 CREATE TABLE IF NOT EXISTS parse_records(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_url TEXT, detail_url TEXT, title TEXT, date TEXT,
@@ -471,6 +476,51 @@ class Database:
     def task_count(self) -> int:
         with self._lock, self._conn() as c:
             return int(c.execute("SELECT COUNT(*) FROM task_log").fetchone()[0])
+
+    # ------------------------------------------------------------- operation_logs
+    def add_operation_log(
+        self,
+        category: str,
+        action: str,
+        detail: str,
+        status: str = "ok",
+        operator: str = "admin",
+    ) -> int:
+        """记录系统操作日志（下载、解析、追剧、配置变动等）。"""
+        with self._lock, self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO operation_logs(created_at, category, action, detail, status, operator) "
+                "VALUES(?,?,?,?,?,?)",
+                (now_ms(), category, action, detail, status, operator),
+            )
+            return int(cur.lastrowid)
+
+    def list_operation_logs(
+        self, limit: int = 200, category: str = "", keyword: str = ""
+    ) -> list[dict]:
+        """获取操作日志列表，支持按分类与关键词筛选。"""
+        sql = "SELECT * FROM operation_logs"
+        args: list = []
+        conds: list[str] = []
+        if category:
+            conds.append("category=?")
+            args.append(category)
+        if keyword:
+            conds.append("(action LIKE ? OR detail LIKE ? OR operator LIKE ?)")
+            like = f"%{keyword}%"
+            args.extend([like, like, like])
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        with self._lock, self._conn() as c:
+            rows = c.execute(sql, args).fetchall()
+        return [dict(r) for r in rows]
+
+    def clear_operation_logs(self) -> None:
+        """清空全部操作日志。"""
+        with self._lock, self._conn() as c:
+            c.execute("DELETE FROM operation_logs")
 
     # ------------------------------------------------------------- parse
     def existing_detail_urls(self, site_url: str) -> set:
