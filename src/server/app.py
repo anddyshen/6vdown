@@ -60,7 +60,7 @@ class VerifyRequest(BaseModel):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="6vdown / C2Down Web Server", version="1.0.4")
+    app = FastAPI(title="6Vdown Web Server", version="1.0.4")
 
     # 允许跨域（方便前端独立开发或同源访问）
     app.add_middleware(

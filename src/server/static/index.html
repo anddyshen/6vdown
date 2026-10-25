@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>6vdown / C2Down · 影视解析与自动追剧</title>
+  <title>6Vdown · 影视解析与自动追剧</title>
   <meta name="theme-color" content="#4f46e5">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -25,7 +25,7 @@
         <div class="flex items-center space-x-3">
           <div class="bg-white text-indigo-600 p-2 rounded-lg font-black text-xl shadow">⚡</div>
           <div>
-            <h1 class="font-bold text-lg leading-tight">6vdown / C2Down</h1>
+            <h1 class="font-bold text-lg leading-tight">6Vdown</h1>
             <p class="text-xs text-indigo-200">影视站解析 & NAS 自动追剧</p>
           </div>
         </div>
@@ -183,7 +183,7 @@
               <tbody class="divide-y divide-slate-100">
                 <tr v-for="(it, idx) in filteredItems" :key="idx" class="hover:bg-slate-50 transition">
                   <td class="py-3 px-4">
-                    <span v-if="it.is_red" class="bg-red-100 text-red-700 text-xs px-1.5 py-0.5 rounded font-bold mr-1">置顶</span>
+                    <span v-if="it.is_red" class="bg-red-100 text-red-700 text-xs px-1.5 py-0.5 rounded font-bold mr-1">推荐</span>
                     <span v-if="it.is_classic" class="bg-amber-100 text-amber-800 text-xs px-1.5 py-0.5 rounded mr-1">经典</span>
                     <a :href="it.detail_url" target="_blank" class="font-medium text-slate-800 hover:text-indigo-600 transition">{{ it.title }}</a>
                   </td>
@@ -1274,9 +1274,43 @@
           showMsg(res.message, !res.ok);
         }
 
+        function fallbackCopy(txt) {
+          const ta = document.createElement('textarea');
+          ta.value = txt;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          ta.style.top = '0';
+          ta.setAttribute('readonly', '');
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            const ok = document.execCommand('copy');
+            if (ok) {
+              showMsg('已成功复制磁力链接到剪贴板！');
+            } else {
+              showMsg('复制失败，请手动选择复制', true);
+            }
+          } catch (e) {
+            showMsg('复制失败: ' + e, true);
+          } finally {
+            document.body.removeChild(ta);
+          }
+        }
+
         function copyText(txt) {
-          navigator.clipboard.writeText(txt);
-          showMsg('链接已复制到剪贴板！');
+          if (!txt) {
+            showMsg('复制内容为空', true);
+            return;
+          }
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(txt).then(() => {
+              showMsg('已成功复制磁力链接到剪贴板！');
+            }).catch(() => {
+              fallbackCopy(txt);
+            });
+          } else {
+            fallbackCopy(txt);
+          }
         }
 
         // 操作日志相关
