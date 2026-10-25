@@ -606,12 +606,12 @@ class Database:
             with self._lock, self._conn() as c:
                 rows = c.execute(
                     f"SELECT * FROM parse_records WHERE site_url IN ({marks}) "
-                    "ORDER BY id ASC", urls).fetchall()
+                    "ORDER BY id DESC", urls).fetchall()
             return [self._row_to_parse_item(r) for r in rows]
         with self._lock, self._conn() as c:
             rows = c.execute(
                 "SELECT * FROM parse_records WHERE site_url=? "
-                "ORDER BY id ASC",
+                "ORDER BY id DESC",
                 (site_url,),
             ).fetchall()
         return [self._row_to_parse_item(r) for r in rows]

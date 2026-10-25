@@ -118,6 +118,24 @@ class ServerService:
             all_urls.extend(s.entries() if s.entries() else [self.db.current_mirror_url() or ""])
 
         items = self.db.list_parse_items(all_urls) if all_urls else []
+
+        def _date_sort_key(d: str):
+            if not d:
+                return (0, 0, 0)
+            parts = str(d).strip().split("-")
+            try:
+                if len(parts) == 3:
+                    return (int(parts[0]), int(parts[1]), int(parts[2]))
+                if len(parts) == 2:
+                    from datetime import datetime
+                    return (datetime.now().year, int(parts[0]), int(parts[1]))
+            except Exception:
+                pass
+            return (0, 0, 0)
+
+        # 默认按更新日期倒序（最新排最前），同日期按最新入库记录倒序
+        items.sort(key=lambda it: (_date_sort_key(it.date), getattr(it, "last_seen", 0) or 0), reverse=True)
+
         return [
             {
                 "title": it.title,

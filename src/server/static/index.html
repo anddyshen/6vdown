@@ -31,7 +31,7 @@
         </div>
 
         <!-- 导航 Tab -->
-        <nav class="flex space-x-1 sm:space-x-2">
+        <nav class="flex space-x-1 sm:space-x-2 items-center">
           <button @click="tab = 'workbench'" :class="tabClass('workbench')" class="px-3 py-2 rounded-md text-sm font-medium transition">
             ⚡ 工作台
           </button>
@@ -44,6 +44,9 @@
           </button>
           <button @click="tab = 'settings'" :class="tabClass('settings')" class="px-3 py-2 rounded-md text-sm font-medium transition">
             ⚙️ 设置
+          </button>
+          <button v-if="tokenConfigured" @click="logoutAuth" title="锁定并清除本地登录令牌" class="px-2.5 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded-md transition flex items-center gap-1 border border-slate-700">
+            <span>🔒 锁定</span>
           </button>
         </nav>
       </div>
@@ -73,6 +76,9 @@
             <button @click="openLogs = !openLogs" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 hover:bg-slate-50 transition">
               📜 控制台日志 <span v-if="parseStatus.is_parsing" class="animate-pulse text-amber-500 font-bold">● 运行中</span>
             </button>
+            <button @click="forceFullRefresh" :disabled="parseStatus.is_parsing" title="清空现有抓取记录，从源站重新获取全部最新条目" class="px-3 py-1.5 text-sm rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition flex items-center space-x-1">
+              <span>🔄 重新抓取</span>
+            </button>
             <button @click="triggerParse" :disabled="parseStatus.is_parsing" class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium px-4 py-1.5 rounded-lg text-sm shadow transition flex items-center space-x-1">
               <span v-if="parseStatus.is_parsing" class="animate-spin mr-1">⟳</span>
               <span>{{ parseStatus.is_parsing ? '正在抓取...' : '🚀 开始解析' }}</span>
@@ -90,12 +96,24 @@
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-slate-200 text-sm">
-              <thead class="bg-slate-50 text-slate-500 text-left">
+              <thead class="bg-slate-50 text-slate-500 text-left select-none">
                 <tr>
-                  <th class="py-3 px-4 font-semibold">影视标题</th>
+                  <th @click="toggleSort('title')" class="py-3 px-4 font-semibold cursor-pointer hover:text-indigo-600 transition">
+                    <span>影视标题</span>
+                    <span v-if="sortField === 'title'" class="text-indigo-600 ml-1 text-xs">{{ sortAsc ? '▲' : '▼' }}</span>
+                    <span v-else class="text-slate-300 ml-1 text-xs">↕</span>
+                  </th>
                   <th class="py-3 px-3 font-semibold w-24">区块</th>
-                  <th class="py-3 px-3 font-semibold w-28">更新日期</th>
-                  <th class="py-3 px-3 font-semibold w-24 text-center">分集磁力</th>
+                  <th @click="toggleSort('date')" class="py-3 px-3 font-semibold w-32 cursor-pointer hover:text-indigo-600 transition">
+                    <span>更新日期</span>
+                    <span v-if="sortField === 'date'" class="text-indigo-600 ml-1 text-xs">{{ sortAsc ? '▲ 升序' : '▼ 降序' }}</span>
+                    <span v-else class="text-slate-300 ml-1 text-xs">↕</span>
+                  </th>
+                  <th @click="toggleSort('magnets_count')" class="py-3 px-3 font-semibold w-28 text-center cursor-pointer hover:text-indigo-600 transition">
+                    <span>分集磁力</span>
+                    <span v-if="sortField === 'magnets_count'" class="text-indigo-600 ml-1 text-xs">{{ sortAsc ? '▲' : '▼' }}</span>
+                    <span v-else class="text-slate-300 ml-1 text-xs">↕</span>
+                  </th>
                   <th class="py-3 px-4 font-semibold w-36 text-right">操作</th>
                 </tr>
               </thead>
@@ -527,6 +545,24 @@
         </div>
       </div>
     </div>
+
+    <!-- 访问密码/安全令牌验证弹窗 -->
+    <div v-if="authModal.show" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-slate-200 animate-fadeIn">
+        <div class="text-center space-y-1">
+          <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🔐</div>
+          <h3 class="text-lg font-bold text-slate-800">安全访问验证</h3>
+          <p class="text-xs text-slate-500">服务端已启用访问令牌（Token）保护，请输入令牌以继续访问。</p>
+        </div>
+        <div class="space-y-2">
+          <input v-model="authModal.tokenInput" @keyup.enter="submitAuthToken" type="password" placeholder="请输入 API Token / 访问密码..." autofocus class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-center text-slate-800" />
+          <p v-if="authModal.error" class="text-xs text-rose-500 text-center font-medium">{{ authModal.error }}</p>
+        </div>
+        <button @click="submitAuthToken" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg text-sm transition shadow">
+          验证并解锁
+        </button>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -536,6 +572,56 @@
       setup() {
         const tab = ref('workbench');
         const apiToken = ref(localStorage.getItem('6vdown_api_token') || '');
+        const tokenConfigured = ref(false);
+        const authModal = ref({ show: false, tokenInput: '', error: '' });
+
+        async function checkAuthStatus() {
+          try {
+            const res = await fetch('/api/auth/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: apiToken.value })
+            }).then(r => r.json());
+            tokenConfigured.value = !!res.token_required;
+            if (res.token_required && !res.ok) {
+              authModal.value.show = true;
+              authModal.value.tokenInput = '';
+              authModal.value.error = '';
+            }
+          } catch (e) {
+            console.error('Check auth error', e);
+          }
+        }
+
+        async function submitAuthToken() {
+          const t = authModal.value.tokenInput.trim();
+          try {
+            const res = await fetch('/api/auth/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: t })
+            }).then(r => r.json());
+            if (res.ok) {
+              apiToken.value = t;
+              localStorage.setItem('6vdown_api_token', t);
+              authModal.value.show = false;
+              authModal.value.error = '';
+              initAll();
+            } else {
+              authModal.value.error = '访问令牌错误，请重新输入';
+            }
+          } catch (e) {
+            authModal.value.error = '验证请求失败: ' + e;
+          }
+        }
+
+        function logoutAuth() {
+          if (confirm('确定锁定并清除本地已保存的安全令牌吗？')) {
+            apiToken.value = '';
+            localStorage.removeItem('6vdown_api_token');
+            authModal.value.show = true;
+          }
+        }
 
         async function authFetch(url, options = {}) {
           options.headers = options.headers || {};
@@ -544,13 +630,10 @@
           }
           const res = await fetch(url, options);
           if (res.status === 401) {
-            const token = prompt('当前服务端已开启安全鉴权，请输入 API Token:');
-            if (token !== null) {
-              apiToken.value = token.trim();
-              localStorage.setItem('6vdown_api_token', apiToken.value);
-              options.headers['X-API-Token'] = apiToken.value;
-              return fetch(url, options);
-            }
+            tokenConfigured.value = true;
+            authModal.value.show = true;
+            authModal.value.error = '当前会话未通过安全验证，请输入访问令牌';
+            throw new Error('Unauthorized');
           }
           return res;
         }
@@ -730,11 +813,62 @@
           items.value = res;
         }
 
+        const sortField = ref('date');
+        const sortAsc = ref(false);
+
+        function toggleSort(field) {
+          if (sortField.value === field) {
+            sortAsc.value = !sortAsc.value;
+          } else {
+            sortField.value = field;
+            sortAsc.value = false;
+          }
+        }
+
         const filteredItems = computed(() => {
-          if (!filterKeyword.value.trim()) return items.value;
-          const k = filterKeyword.value.trim().toLowerCase();
-          return items.value.filter(it => it.title.toLowerCase().includes(k) || (it.desc && it.desc.toLowerCase().includes(k)));
+          let list = items.value || [];
+          if (filterKeyword.value.trim()) {
+            const k = filterKeyword.value.trim().toLowerCase();
+            list = list.filter(it => (it.title && it.title.toLowerCase().includes(k)) || (it.desc && it.desc.toLowerCase().includes(k)));
+          }
+          const field = sortField.value;
+          const asc = sortAsc.value;
+          return [...list].sort((a, b) => {
+            let va = a[field] ?? '';
+            let vb = b[field] ?? '';
+            if (field === 'magnets_count') {
+              va = Number(va) || 0;
+              vb = Number(vb) || 0;
+              return asc ? va - vb : vb - va;
+            }
+            if (field === 'date') {
+              const norm = (s) => {
+                if (!s) return '0000-00-00';
+                const p = String(s).trim().split('-');
+                const currYear = new Date().getFullYear();
+                if (p.length === 2) return `${currYear}-${p[0].padStart(2, '0')}-${p[1].padStart(2, '0')}`;
+                if (p.length === 3) return `${p[0]}-${p[1].padStart(2, '0')}-${p[2].padStart(2, '0')}`;
+                return String(s);
+              };
+              const da = norm(va);
+              const db = norm(vb);
+              return asc ? da.localeCompare(db) : db.localeCompare(da);
+            }
+            return asc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+          });
         });
+
+        async function forceFullRefresh() {
+          if (!confirm('确定清空历史解析记录并从源站重新全量拉取吗？\n（追剧订阅与下载设置不会受影响）')) return;
+          try {
+            await authFetch('/api/settings/reset_cache', { method: 'POST' });
+            items.value = [];
+            showMsg('已清空抓取缓存，正在从源站重新获取全部条目...');
+            triggerParse();
+          } catch (e) {
+            showMsg('重置缓存失败: ' + e, true);
+          }
+        }
 
         async function triggerParse() {
           await authFetch('/api/workbench/parse', {
@@ -895,16 +1029,23 @@
           showMsg('链接已复制到剪贴板！');
         }
 
-        onMounted(() => {
+        function initAll() {
           loadSites();
           loadWorkbench();
           loadSubs();
           loadSettings();
+        }
+
+        onMounted(async () => {
+          await checkAuthStatus();
+          initAll();
         });
 
         return {
           tab, tabClass, sites, selectedSiteId, switchSite, filterKeyword,
-          openLogs, parseStatus, triggerParse, items, filteredItems,
+          openLogs, parseStatus, triggerParse, forceFullRefresh, items, filteredItems,
+          sortField, sortAsc, toggleSort,
+          authModal, tokenConfigured, submitAuthToken, logoutAuth,
           openItemDetail, quickSubscribe, subs, subUpdates, checkingSubs,
           checkSub, checkAllSubs, deleteSub, downloadMagnet, downloadAllMissing,
           searchKeyword, searching, searchResults, doSearch, config, hosts,
