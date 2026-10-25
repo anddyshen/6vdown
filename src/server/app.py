@@ -342,7 +342,14 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index():
         if index_file.exists():
-            return FileResponse(index_file)
+            return FileResponse(
+                index_file,
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
         return HTMLResponse("<h2>6vdown / C2Down Web Server 正在运行中</h2><p>Web 前端静态页面准备就绪中……</p>")
 
     if STATIC_DIR.exists():

@@ -2,9 +2,8 @@ version: '3.8'
 
 services:
   6vdown:
-    # 如使用本地源码构建：
-    build: .
     image: ghcr.io/anddyshen/6vdown:latest
+    pull_policy: always
     container_name: 6vdown
     restart: unless-stopped
     # 采用 Host 主机网络：与群晖/家庭局域网处于完全同一网段，出站源 IP 即为 NAS 本机真实 IP
