@@ -111,18 +111,50 @@ class TestServerService(unittest.TestCase):
         # 验证带 sub_id 的下载请求不会因为缺少 record_subscription_push 抛出异常
         sub_id = self.service.add_subscription("测试剧集", "https://example.com/test")
         res = self.service.send_download(
-            url="magnet:?xt=urn:btih:dummy",
+            url="magnet:?xt=urn:btih:dummy&dn=TestEpisode.S01E01.1080p.mkv",
             sub_id=sub_id,
             ep_label="第01集",
             quality="1080P",
+            title="测试剧集",
         )
         self.assertIn("ok", res)
         # 验证数据库中存在推送记录
-        pushed = self.service.db.is_episode_pushed(sub_id, "第01集")
-        # 如果 mock/downloader 成功，检查记录
         history = self.service.db.get_pushed_labels(sub_id)
         if res.get("ok"):
             self.assertIn("第01集", history)
+
+        # 验证操作日志中包含详细下载名称（包含剧名或文件名）
+        logs = self.service.db.list_operation_logs(category="download", limit=5)
+        self.assertGreater(len(logs), 0)
+        recent_log = logs[0]
+        self.assertIn("测试剧集", recent_log["detail"])
+        self.assertIn("TestEpisode.S01E01.1080p.mkv", recent_log["detail"])
+
+    def test_format_download_name_rules(self):
+        from src.linkparse import format_download_name
+        # 规则 1：无文件名，使用解析出的影视名 + 分集标签 + 画质
+        n1 = format_download_name("magnet:?xt=urn:btih:abc", title="凡人修仙传", ep_label="第120集", quality="1080P")
+        self.assertEqual(n1, "《凡人修仙传》 第120集 [1080P]")
+
+        # 规则 2：Magnet 自带 &dn= 文件名且与剧名不重复（由于已包含 E01，不重复追加 (第01集)）
+        n2 = format_download_name(
+            "magnet:?xt=urn:btih:abc&dn=Joy.of.Life.S02E01.1080p.mkv",
+            title="庆余年 第二季",
+            ep_label="第01集",
+        )
+        self.assertEqual(n2, "《庆余年 第二季》 Joy.of.Life.S02E01.1080p.mkv")
+
+        # 规则 3：Magnet 自带 &dn= 且文件名内已有剧名与集数
+        n3 = format_download_name(
+            "magnet:?xt=urn:btih:abc&dn=%E7%99%BD%E5%A4%9C%E7%A0%B4%E6%99%93.EP01.1080p.mkv",
+            title="白夜破晓",
+            ep_label="第01集",
+        )
+        self.assertEqual(n3, "白夜破晓.EP01.1080p.mkv")
+
+        # 规则 4：分集标签自身就是完整文件名
+        n4 = format_download_name("magnet:?xt=urn:btih:abc", title="热辣滚烫", ep_label="HD1080P国语中字.mp4")
+        self.assertEqual(n4, "《热辣滚烫》 HD1080P国语中字.mp4")
 
 
 if __name__ == "__main__":

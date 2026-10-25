@@ -46,6 +46,10 @@ log = get_logger("controller")
 
 
 def title_for(pl) -> str:
+    from .linkparse import format_download_name
+    name = format_download_name(pl.url, raw_label=getattr(pl, "note", "") or "")
+    if name and not name.startswith("magnet:?") and not name.startswith("http"):
+        return name
     if pl.kind == "magnet":
         return "磁力任务"
     if pl.sub == "torrent":
@@ -279,6 +283,15 @@ class Controller(QObject):
                          host_name=self._host_label(host), host_type=host.type,
                          status="ok" if ok else "fail", message=msg)
         self.db.add_task(rec)
+        try:
+            self.db.add_operation_log(
+                category="download",
+                action="推送到下载器",
+                detail=f"{title or link[:60]} -> 目标主机: {self._host_label(host)} [{host.type}] | 结果: {msg}",
+                status="success" if ok else "fail",
+            )
+        except Exception:
+            pass
         try:
             self.history_page.refresh()
         except Exception:

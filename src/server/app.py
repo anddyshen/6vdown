@@ -43,6 +43,8 @@ class DownloadRequest(BaseModel):
     sub_id: Optional[int] = None
     ep_label: str = ""
     quality: str = ""
+    title: str = ""
+    raw_label: str = ""
 
 
 class EmbyTestRequest(BaseModel):
@@ -263,7 +265,15 @@ def create_app() -> FastAPI:
     # ------------------------------------------------------------ 发送下载
     @app.post("/api/download")
     def send_download(req: DownloadRequest):
-        res = service.send_download(req.url, req.host_id, req.sub_id, req.ep_label, req.quality)
+        res = service.send_download(
+            req.url,
+            host_id=req.host_id,
+            sub_id=req.sub_id,
+            ep_label=req.ep_label,
+            quality=req.quality,
+            title=req.title,
+            raw_label=req.raw_label,
+        )
         if not res.get("ok"):
             raise HTTPException(400, res.get("message", "发送下载失败"))
         return res

@@ -14,6 +14,7 @@ from ..constants import DEFAULT_ENABLED_BLOCKS, app_data_dir
 from ..database import Database
 from ..downloader.manager import DownloaderManager
 from ..emby_client import EmbyClient
+from ..linkparse import format_download_name
 from ..log import get_logger
 from ..models import DownloadHost, MagnetLink, ParseItem, Subscription
 from ..site.fetcher import SiteFetcher
@@ -438,11 +439,15 @@ class ServerService:
             }
             # 如果配置了“发现新集自动直接下载”
             if auto_download and cand.get("magnet_url"):
-                send_res = self.downloader.send(cand["magnet_url"])
-                if send_res.ok:
-                    self.db.record_subscription_push(
-                        sub.id, cand["ep_label"], cand["magnet_url"], cand["quality"]
-                    )
+                send_res = self.send_download(
+                    url=cand["magnet_url"],
+                    sub_id=sub.id,
+                    ep_label=cand.get("ep_label", ""),
+                    quality=cand.get("quality", ""),
+                    title=sub.title,
+                    raw_label=cand.get("magnet_label", ""),
+                )
+                if send_res.get("ok"):
                     log.info("【自动追剧】已成功自动推送最新一集: %s (%s)", sub.title, cand["ep_label"])
 
         if up.missing_history:
@@ -503,6 +508,8 @@ class ServerService:
         sub_id: Optional[int] = None,
         ep_label: str = "",
         quality: str = "",
+        title: str = "",
+        raw_label: str = "",
     ) -> dict:
         host = None
         if host_id:
@@ -513,6 +520,35 @@ class ServerService:
         if res.ok and sub_id:
             self.db.record_subscription_push(sub_id, ep_label, url, quality)
 
+        # 智能解析或补全影视标题
+        if not title and sub_id:
+            try:
+                subs = [s for s in self.db.list_subscriptions() if s.id == sub_id]
+                if subs:
+                    title = subs[0].title
+            except Exception:
+                pass
+
+        if not title:
+            try:
+                with self.db._lock, self.db._conn() as c:
+                    row = c.execute(
+                        "SELECT title FROM parse_records WHERE magnets_json LIKE ? LIMIT 1",
+                        (f"%{url[:40]}%",),
+                    ).fetchone()
+                    if row and row["title"]:
+                        title = row["title"].strip()
+            except Exception:
+                pass
+
+        download_name = format_download_name(
+            url=url,
+            title=title,
+            ep_label=ep_label,
+            quality=quality,
+            raw_label=raw_label,
+        )
+
         active_host = host or self.db.active_host()
         h_name = active_host.name if active_host else "默认下载器"
         h_type = active_host.type if active_host else ""
@@ -520,7 +556,7 @@ class ServerService:
         from ..models import TaskRecord
         self.db.add_task(
             TaskRecord(
-                title=f"{ep_label} ({quality})" if ep_label else (url[:50] + "..."),
+                title=download_name,
                 link=url,
                 source="web",
                 host_name=h_name,
@@ -532,7 +568,7 @@ class ServerService:
         self.db.add_operation_log(
             category="download",
             action="推送到下载器",
-            detail=f"{ep_label or '影视资源'} ({quality or '默认'}) -> 目标主机: {h_name} [{h_type}] | 结果: {res.message}",
+            detail=f"{download_name} -> 目标主机: {h_name} [{h_type}] | 结果: {res.message}",
             status="success" if res.ok else "fail",
         )
         return {"ok": res.ok, "message": res.message}
