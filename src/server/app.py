@@ -45,6 +45,8 @@ class DownloadRequest(BaseModel):
     quality: str = ""
     title: str = ""
     raw_label: str = ""
+    block: str = ""
+    site_key: str = ""
 
 
 class EmbyTestRequest(BaseModel):
@@ -273,6 +275,8 @@ def create_app() -> FastAPI:
             quality=req.quality,
             title=req.title,
             raw_label=req.raw_label,
+            block=req.block,
+            site_key=req.site_key,
         )
         if not res.get("ok"):
             raise HTTPException(400, res.get("message", "发送下载失败"))

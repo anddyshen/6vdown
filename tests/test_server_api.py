@@ -123,12 +123,21 @@ class TestServerService(unittest.TestCase):
         if res.get("ok"):
             self.assertIn("第01集", history)
 
-        # 验证操作日志中包含详细下载名称（包含剧名或文件名）
+        # 验证操作日志中包含详细下载名称（包含剧名或文件名）与下载器标签
         logs = self.service.db.list_operation_logs(category="download", limit=5)
         self.assertGreater(len(logs), 0)
         recent_log = logs[0]
         self.assertIn("测试剧集", recent_log["detail"])
         self.assertIn("TestEpisode.S01E01.1080p.mkv", recent_log["detail"])
+        self.assertIn("标签: 6vdown", recent_log["detail"])
+
+    def test_make_download_tag(self):
+        from src.linkparse import make_download_tag
+        self.assertEqual(make_download_tag("hao6v", "美剧"), "6vdown+美剧")
+        self.assertEqual(make_download_tag("6v电影（默认）", "最新电影"), "6vdown+最新电影")
+        self.assertEqual(make_download_tag("", "国剧"), "6vdown+国剧")
+        self.assertEqual(make_download_tag("dygang", "经典高清"), "dygang+经典高清")
+        self.assertEqual(make_download_tag("hao6v", ""), "6vdown")
 
     def test_format_download_name_rules(self):
         from src.linkparse import format_download_name

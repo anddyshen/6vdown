@@ -23,7 +23,7 @@ class BaseClient:
         self.host = host
         self.base = host.base_url() if host else ""
 
-    def add(self, url: str, timeout: int = 25) -> SendResult:
+    def add(self, url: str, timeout: int = 25, tag: str = "") -> SendResult:
         raise NotImplementedError
 
     def test(self, timeout: int = 8) -> SendResult:

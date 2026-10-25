@@ -43,14 +43,17 @@ class QBittorrentClient(BaseClient):
         except Exception as e:
             return _err(e, "连接 qBittorrent 失败")
 
-    def add(self, url: str, timeout: int = 25) -> SendResult:
+    def add(self, url: str, timeout: int = 25, tag: str = "") -> SendResult:
         try:
             s = self._session(timeout)
             r = self._login(s, timeout)
             if not r.ok:
                 return r
+            data = {"urls": url}
+            if tag:
+                data["tags"] = tag
             resp = s.post(f"{self.base}/api/v2/torrents/add",
-                          data={"urls": url}, timeout=timeout)
+                          data=data, timeout=timeout)
             text = (resp.text or "").strip()
             if resp.status_code == 200:
                 return SendResult(True, "已发送至 qBittorrent", text[:120])
@@ -108,9 +111,12 @@ class TransmissionClient(BaseClient):
             return SendResult(True, "success")
         return SendResult(False, f"Transmission: {body.get('result', resp.text[:100])}")
 
-    def add(self, url: str, timeout: int = 25) -> SendResult:
+    def add(self, url: str, timeout: int = 25, tag: str = "") -> SendResult:
         try:
-            r = self._rpc("torrent-add", {"filename": url}, timeout)
+            args = {"filename": url}
+            if tag:
+                args["labels"] = [tag]
+            r = self._rpc("torrent-add", args, timeout)
             if r.ok:
                 return SendResult(True, "已发送至 Transmission")
             return r
@@ -153,7 +159,7 @@ class Aria2Client(BaseClient):
             return SendResult(False, f"Aria2: {body['error'].get('message', body['error'])}")
         return SendResult(True, "success", json.dumps(body.get("result", ""), ensure_ascii=False))
 
-    def add(self, url: str, timeout: int = 30) -> SendResult:
+    def add(self, url: str, timeout: int = 30, tag: str = "") -> SendResult:
         try:
             r = self._call("aria2.addUri", [[url]], timeout)
             if r.ok:

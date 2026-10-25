@@ -27,12 +27,12 @@ class DownloaderManager:
         return TYPE_LABELS.get(h.type, h.type) + ("/" + h.name if h.name else "")
 
     def send(self, url: str, host: Optional[DownloadHost] = None,
-             timeout: int = 30) -> SendResult:
+             timeout: int = 30, tag: str = "") -> SendResult:
         host = host or self.db.active_host()
         if not host:
             return SendResult(False, "尚未配置下载主机，请在“设置”中添加并激活一台")
         client = BaseClient.build(host)
-        return client.add(url, timeout=timeout)
+        return client.add(url, timeout=timeout, tag=tag)
 
     def test_host(self, host: DownloadHost, timeout: int = 8) -> SendResult:
         return BaseClient.build(host).test(timeout=timeout)

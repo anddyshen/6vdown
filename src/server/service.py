@@ -14,7 +14,7 @@ from ..constants import DEFAULT_ENABLED_BLOCKS, app_data_dir
 from ..database import Database
 from ..downloader.manager import DownloaderManager
 from ..emby_client import EmbyClient
-from ..linkparse import format_download_name
+from ..linkparse import format_download_name, make_download_tag
 from ..log import get_logger
 from ..models import DownloadHost, MagnetLink, ParseItem, Subscription
 from ..site.fetcher import SiteFetcher
@@ -427,6 +427,8 @@ class ServerService:
             "has_emby": up.has_emby,
             "latest_candidate": None,
             "missing_history": [],
+            "site_key": getattr(sub, "site_key", "") or "",
+            "block": getattr(item, "block", "") or "",
         }
 
         if up.latest_candidate:
@@ -439,6 +441,7 @@ class ServerService:
             }
             # 如果配置了“发现新集自动直接下载”
             if auto_download and cand.get("magnet_url"):
+                sub_block = getattr(item, "block", "") or ""
                 send_res = self.send_download(
                     url=cand["magnet_url"],
                     sub_id=sub.id,
@@ -446,6 +449,8 @@ class ServerService:
                     quality=cand.get("quality", ""),
                     title=sub.title,
                     raw_label=cand.get("magnet_label", ""),
+                    block=sub_block,
+                    site_key=getattr(sub, "site_key", "") or "",
                 )
                 if send_res.get("ok"):
                     log.info("【自动追剧】已成功自动推送最新一集: %s (%s)", sub.title, cand["ep_label"])
@@ -510,36 +515,62 @@ class ServerService:
         quality: str = "",
         title: str = "",
         raw_label: str = "",
+        block: str = "",
+        site_key: str = "",
     ) -> dict:
         host = None
         if host_id:
             hosts = [h for h in self.db.list_hosts() if h.id == host_id]
             host = hosts[0] if hosts else None
 
-        res = self.downloader.send(url, host=host)
-        if res.ok and sub_id:
-            self.db.record_subscription_push(sub_id, ep_label, url, quality)
-
-        # 智能解析或补全影视标题
-        if not title and sub_id:
+        # 智能补全影视标题、区块分类与站点信息
+        if sub_id:
             try:
                 subs = [s for s in self.db.list_subscriptions() if s.id == sub_id]
                 if subs:
-                    title = subs[0].title
+                    sub_obj = subs[0]
+                    if not title:
+                        title = sub_obj.title
+                    if not site_key:
+                        site_key = getattr(sub_obj, "site_key", "")
+                    if not block and sub_obj.detail_url:
+                        with self.db._lock, self.db._conn() as c:
+                            r_b = c.execute(
+                                "SELECT block FROM parse_records WHERE detail_url=? LIMIT 1",
+                                (sub_obj.detail_url,),
+                            ).fetchone()
+                            if r_b and r_b["block"]:
+                                block = r_b["block"].strip()
             except Exception:
                 pass
 
-        if not title:
+        if not title or not block or not site_key:
             try:
                 with self.db._lock, self.db._conn() as c:
                     row = c.execute(
-                        "SELECT title FROM parse_records WHERE magnets_json LIKE ? LIMIT 1",
+                        "SELECT title, block, site_key FROM parse_records WHERE magnets_json LIKE ? LIMIT 1",
                         (f"%{url[:40]}%",),
                     ).fetchone()
-                    if row and row["title"]:
-                        title = row["title"].strip()
+                    if row:
+                        if not title and row["title"]:
+                            title = row["title"].strip()
+                        if not block and row["block"]:
+                            block = row["block"].strip()
+                        if not site_key and row["site_key"]:
+                            site_key = row["site_key"].strip()
             except Exception:
                 pass
+
+        if not site_key:
+            cur = self.db.current_site()
+            site_key = getattr(cur, "module_id", "") or "6vdown"
+
+        # 生成下载器标签：[解析的网站简称]+[区块名]，如 6vdown+美剧
+        tag = make_download_tag(site_name=site_key, block=block)
+
+        res = self.downloader.send(url, host=host, tag=tag)
+        if res.ok and sub_id:
+            self.db.record_subscription_push(sub_id, ep_label, url, quality)
 
         download_name = format_download_name(
             url=url,
@@ -568,10 +599,10 @@ class ServerService:
         self.db.add_operation_log(
             category="download",
             action="推送到下载器",
-            detail=f"{download_name} -> 目标主机: {h_name} [{h_type}] | 结果: {res.message}",
+            detail=f"{download_name} [标签: {tag}] -> 目标主机: {h_name} [{h_type}] | 结果: {res.message}",
             status="success" if res.ok else "fail",
         )
-        return {"ok": res.ok, "message": res.message}
+        return {"ok": res.ok, "message": res.message, "tag": tag}
 
     # ------------------------------------------------------------ 设置与连通性
     def get_config(self) -> dict:

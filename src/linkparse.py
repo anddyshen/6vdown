@@ -240,3 +240,25 @@ def format_download_name(
 
     # 5. 兜底
     return u[:60] + "..." if len(u) > 60 else (u or "未知资源")
+
+
+def make_download_tag(site_name: str = "", block: str = "") -> str:
+    """生成下载器标签，格式：[解析的网站简称]+[区块名]，如 6vdown+美剧。"""
+    site = (site_name or "").strip()
+    blk = (block or "").strip()
+
+    s_low = site.lower()
+    if not site or "hao6v" in s_low or "6v" in s_low:
+        short_site = "6vdown"
+    elif "dygang" in s_low or "电影港" in site:
+        short_site = "dygang"
+    elif "dyg7" in s_low or "电影狗" in site:
+        short_site = "dyg7"
+    elif "lou1" in s_low or "1lou" in s_low:
+        short_site = "1lou"
+    else:
+        short_site = site.split("（")[0].split("(")[0].strip() or "6vdown"
+
+    if blk:
+        return f"{short_site}+{blk}"
+    return short_site
