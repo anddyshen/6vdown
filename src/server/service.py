@@ -54,10 +54,19 @@ class ServerService:
         self._scheduler: Optional[BackgroundScheduler] = None
         self._init_scheduler()
 
+        # 启动时根据配置自检
+        if self.cfg.get("sub_auto_on_startup", True):
+            threading.Thread(target=self.check_all_subscriptions, daemon=True, name="StartupSubCheck").start()
+        if self.cfg.get("parse_auto_on_startup", False):
+            threading.Thread(target=lambda: self.start_parse(is_scheduled=True), daemon=True, name="StartupParse").start()
+
     # ------------------------------------------------------------ 调度器
     def _init_scheduler(self) -> None:
         try:
             self._scheduler = BackgroundScheduler(daemon=True)
+            sub_enabled = self.cfg.get("sub_scheduler_enabled", True)
+            parse_enabled = self.cfg.get("parse_enabled", True)
+
             interval_hours = max(1, int(self.cfg.get("sub_interval_hours", 4) or 4))
             self._scheduler.add_job(
                 self.check_all_subscriptions,
@@ -66,6 +75,11 @@ class ServerService:
                 id="sub_check_job",
                 replace_existing=True,
             )
+            if not sub_enabled:
+                job = self._scheduler.get_job("sub_check_job")
+                if job:
+                    job.pause()
+
             # 定时自动解析（默认每 2 小时自动抓取一次全站增量）
             parse_hours = max(1, int(self.cfg.get("parse_interval_hours", 2) or 2))
             self._scheduler.add_job(
@@ -75,12 +89,19 @@ class ServerService:
                 id="site_parse_job",
                 replace_existing=True,
             )
-            if self.cfg.get("sub_scheduler_enabled", True) or self.cfg.get("parse_enabled", True):
+            if not parse_enabled:
+                pjob = self._scheduler.get_job("site_parse_job")
+                if pjob:
+                    pjob.pause()
+
+            if sub_enabled or parse_enabled:
                 self._scheduler.start()
                 log.info(
-                    "ServerService 周期调度器已启动（追剧巡检: %d 小时，定时解析: %d 小时）",
+                    "ServerService 周期调度器已启动（追剧巡检: %d 小时[启用=%s]，定时解析: %d 小时[启用=%s]）",
                     interval_hours,
+                    sub_enabled,
                     parse_hours,
+                    parse_enabled,
                 )
         except Exception as e:
             log.warning("启动定时调度器失败: %s", e)
@@ -90,25 +111,40 @@ class ServerService:
         if not self._scheduler:
             return
         try:
+            sub_enabled = self.cfg.get("sub_scheduler_enabled", True)
+            parse_enabled = self.cfg.get("parse_enabled", True)
+
             interval_hours = max(1, int(self.cfg.get("sub_interval_hours", 4) or 4))
             job = self._scheduler.get_job("sub_check_job")
             if job:
                 job.reschedule("interval", hours=interval_hours)
+                try:
+                    if sub_enabled:
+                        job.resume()
+                    else:
+                        job.pause()
+                except Exception:
+                    pass
 
             parse_hours = max(1, int(self.cfg.get("parse_interval_hours", 2) or 2))
             pjob = self._scheduler.get_job("site_parse_job")
             if pjob:
                 pjob.reschedule("interval", hours=parse_hours)
+                try:
+                    if parse_enabled:
+                        pjob.resume()
+                    else:
+                        pjob.pause()
+                except Exception:
+                    pass
 
-            sub_enabled = self.cfg.get("sub_scheduler_enabled", True)
-            parse_enabled = self.cfg.get("parse_enabled", True)
             any_enabled = sub_enabled or parse_enabled
-
             if any_enabled and not self._scheduler.running:
                 self._scheduler.start()
             elif not any_enabled and self._scheduler.running:
                 self._scheduler.pause()
-            log.info("调度器重载成功，启用状态: %s，追剧周期: %d 小时，解析周期: %d 小时", any_enabled, interval_hours, parse_hours)
+            log.info("调度器重载成功，启用状态: %s，追剧周期: %d 小时(启用=%s)，解析周期: %d 小时(启用=%s)",
+                     any_enabled, interval_hours, sub_enabled, parse_hours, parse_enabled)
         except Exception as e:
             log.warning("重载调度器异常: %s", e)
 

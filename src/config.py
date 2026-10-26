@@ -15,8 +15,9 @@ DEFAULTS = {
     "notify_seconds": 6,          # 弹窗停留秒数
     "auto_send_magnet": True,     # 磁力链接自动发送
     "start_on_boot": False,       # 开机自启
-    "parse_enabled": False,       # 定时自动解析（预留）
-    "parse_interval_min": 30,     # 预留
+    "parse_enabled": True,                    # 定时自动解析
+    "parse_interval_hours": 2,                # 定时解析周期（小时）
+    "parse_auto_on_startup": False,           # 启动时是否自动执行一次解析
     "enabled_blocks": list(BLOCK_KEYWORDS.keys()),
     "enabled_sites": [],              # 工作台勾选的站点 id 列表；空 = 全部启用站点
     "fetch_detail": True,         # 是否抓取详情页磁力

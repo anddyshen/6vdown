@@ -28,9 +28,24 @@ class TestServerService(unittest.TestCase):
     def test_config_operations(self):
         cfg = self.service.get_config()
         self.assertIn("quality_priority", cfg)
-        # 测试更新配置
-        updated = self.service.update_config({"test_docker_flag": True})
+        self.assertIn("parse_interval_hours", cfg)
+        self.assertIn("parse_enabled", cfg)
+
+        # 测试更新定时自动解析周期并重载调度器
+        updated = self.service.update_config({
+            "test_docker_flag": True,
+            "parse_interval_hours": 3,
+            "parse_enabled": True,
+        })
         self.assertTrue(updated.get("test_docker_flag"))
+        self.assertEqual(updated.get("parse_interval_hours"), 3)
+        self.assertTrue(updated.get("parse_enabled"))
+
+        # 验证调度器中的 site_parse_job 对应生效
+        if self.service._scheduler:
+            pjob = self.service._scheduler.get_job("site_parse_job")
+            if pjob:
+                self.assertIsNotNone(pjob)
 
     def test_parse_status(self):
         status = self.service.get_parse_status()

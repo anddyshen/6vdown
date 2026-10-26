@@ -523,7 +523,51 @@
           </div>
         </div>
 
-        <!-- 4. 抓取与并发参数配置 -->
+        <!-- 4. 站点定时自动解析配置 -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
+          <div class="flex justify-between items-center">
+            <div>
+              <h3 class="font-bold text-slate-800 flex items-center">
+                <span class="mr-2">🔄</span> 站点定时自动解析
+              </h3>
+              <p class="text-xs text-slate-500">周期性自动抓取并更新影视资源库，并在首页顶部醒目提示最近一次的增量内容</p>
+            </div>
+            <span class="text-xs font-semibold px-2 py-0.5 rounded" :class="config.parse_enabled !== false ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'">
+              {{ config.parse_enabled !== false ? `已开启 (每 ${config.parse_interval_hours || 2} 小时)` : '已暂停' }}
+            </span>
+          </div>
+
+          <div class="space-y-3 text-sm">
+            <label class="flex items-center space-x-2">
+              <input type="checkbox" v-model="config.parse_enabled" class="rounded text-indigo-600" />
+              <span class="font-medium text-slate-700">开启定时自动解析（后台按设定周期自动拉取站点增量）</span>
+            </label>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">自动解析周期（小时）</label>
+                <div class="flex items-center space-x-2">
+                  <input v-model.number="config.parse_interval_hours" type="number" min="1" max="72" class="w-32 bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <span class="text-xs text-slate-500">小时执行一次（默认 2 小时）</span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1">系统将每隔设定的小时数自动执行一次站点巡检与解析。</p>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">服务启动时行为</label>
+                <label class="flex items-center space-x-2 mt-2">
+                  <input type="checkbox" v-model="config.parse_auto_on_startup" class="rounded text-indigo-600" />
+                  <span class="text-xs text-slate-700">服务/容器启动后立即执行一次站点解析</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-right pt-2 border-t">
+            <button @click="saveConfig" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition shadow">保存定时解析配置</button>
+          </div>
+        </div>
+
+        <!-- 5. 抓取与并发参数配置 -->
         <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-4">
           <h3 class="font-bold text-slate-800">站点抓取与性能参数</h3>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
@@ -1267,6 +1311,9 @@
         async function loadSettings() {
           const res = await authFetch('/api/settings').then(r => r.json());
           config.value = res.config || {};
+          if (config.value.parse_interval_hours === undefined) config.value.parse_interval_hours = 2;
+          if (config.value.parse_enabled === undefined) config.value.parse_enabled = true;
+          if (config.value.parse_auto_on_startup === undefined) config.value.parse_auto_on_startup = false;
           hosts.value = res.hosts || [];
           availableBlocks.value = res.available_blocks || [];
           dataDir.value = res.data_dir || '';
