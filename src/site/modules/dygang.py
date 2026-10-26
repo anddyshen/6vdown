@@ -99,6 +99,17 @@ class DygangModule(SiteModule):
         """
         return parse_search_results(text, base_url)
 
+    def parse_detail(self, html: str, item: ParseItem) -> None:
+        # 详情页磁力/简介与 6v 家族同构：磁力在【下载地址】区，简介取 meta/◎
+        from ..netdisk import extract_pan_links
+        from ..parser import parse_detail_desc, parse_detail_magnets
+
+        item.magnets = parse_detail_magnets(html)
+        item.desc = parse_detail_desc(html)
+        # 详情页也可能给出网盘分享（含提取码），一并收录为“仅复制”资源
+        item.magnets += extract_pan_links(html, item.detail_url or "",
+                                         item.title or "")
+
 
 # ---------------------------------------------------------------- 搜索解析
 _SEARCH_LINK_RE = re.compile(
@@ -139,17 +150,6 @@ def parse_search_results(html: str, base_url: str) -> list:
                         or _RED_RE.search(head[-300:] or "")),
             is_classic=("经典" in title))
     return list(items.values())
-
-    def parse_detail(self, html: str, item: ParseItem) -> None:
-        # 详情页磁力/简介与 6v 家族同构：磁力在【下载地址】区，简介取 meta/◎
-        from ..netdisk import extract_pan_links
-        from ..parser import parse_detail_desc, parse_detail_magnets
-
-        item.magnets = parse_detail_magnets(html)
-        item.desc = parse_detail_desc(html)
-        # 详情页也可能给出网盘分享（含提取码），一并收录为“仅复制”资源
-        item.magnets += extract_pan_links(html, item.detail_url or "",
-                                         item.title or "")
 
 
 # ---------------------------------------------------------------- 区块边界

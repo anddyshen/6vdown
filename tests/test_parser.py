@@ -113,6 +113,22 @@ class TestDetailParser(unittest.TestCase):
         self.assertIn("◎年", desc)
         self.assertGreater(len(desc), 10)
 
+    def test_various_download_links(self):
+        """测试详情页提取 ed2k, thunder, .torrent 等多种下载协议资源。"""
+        html = """<div>
+        <a href="http://xz.66vod.net:889/2017/test.torrent">全集.1080p.WEB-DL.torrent</a>
+        <a href="ed2k://|file|%E7%B9%81%E8%8A%B1.EP01.1080p.mkv|1000|ABC|/">第01集</a>
+        <a href="thunder://QUFodHRwOi8veHh4L2FiYy5tcDdaWg==">迅雷高速下载</a>
+        </div>"""
+        ms = parse_detail_magnets(html)
+        self.assertEqual(len(ms), 3)
+        self.assertEqual(ms[0].kind, "ed2k")
+        self.assertEqual(ms[0].label, "第01集")
+        self.assertEqual(ms[1].kind, "thunder")
+        self.assertEqual(ms[1].label, "迅雷高速下载")
+        self.assertEqual(ms[2].kind, "torrent")
+        self.assertIn("test.torrent", ms[2].url)
+
 
 if __name__ == "__main__":
     unittest.main()

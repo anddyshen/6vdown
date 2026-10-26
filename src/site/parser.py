@@ -14,7 +14,7 @@ import bisect
 import html as html_mod
 import re
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from .. import constants
 from ..models import MagnetLink, ParseItem
@@ -25,6 +25,9 @@ _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.I)
 _YMD_RE = re.compile(r"(?<![0-9])(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})")
 _MD_RE = re.compile(r"(?<![0-9])(\d{1,2})-(\d{1,2})(?!\d)")
 _MAGNET_RE = re.compile(r"magnet:\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}")
+_ED2K_RE = re.compile(r"ed2k://\|file\|[^\s\"'<>]+", re.I)
+_THUNDER_RE = re.compile(r"thunder://[a-zA-Z0-9+/=]+", re.I)
+_TORRENT_A_RE = re.compile(r'<a\b[^>]*href=["\']?([^"\' >]+\.torrent(?:[?][^"\' >]*)?)["\']?[^>]*>(.*?)</a>', re.I | re.S)
 _RED_RE = re.compile(constants.RED_RE_STR, re.I)
 _DN_RE = re.compile(r"[?&]dn=([^&\s]+)")
 _META_DESC_RE = re.compile(
@@ -264,14 +267,38 @@ def host_of(url: str) -> str:
 
 # ---------------------------------------------------------------- 详情页
 def parse_detail_magnets(html: str) -> list:
-    """解析详情页所有磁力，返回 list[MagnetLink]。label 优先取磁力所在 <a> 的文字。"""
+    """解析详情页所有磁力与下载链接（含 magnet / ed2k / thunder / .torrent），返回 list[MagnetLink]。"""
     out = []
-    for m in _MAGNET_RE.finditer(html or ""):
+    text = html or ""
+    # 1. 磁力链接
+    for m in _MAGNET_RE.finditer(text):
         url = m.group(0)
-        label = _label_for_magnet(html, m.start())
+        label = _label_for_magnet(text, m.start())
         if not label:
             label = _dn_of(url)
-        out.append(MagnetLink(label=label[:80], url=url))
+        out.append(MagnetLink(label=label[:80], url=url, kind="magnet"))
+
+    # 2. ed2k 链接
+    for m in _ED2K_RE.finditer(text):
+        url = m.group(0)
+        label = _label_for_magnet(text, m.start())
+        if not label:
+            parts = url.split("|")
+            label = unquote(parts[2]) if len(parts) > 2 else "ed2k资源"
+        out.append(MagnetLink(label=label[:80], url=url, kind="ed2k"))
+
+    # 3. 迅雷专用链
+    for m in _THUNDER_RE.finditer(text):
+        url = m.group(0)
+        label = _label_for_magnet(text, m.start()) or "迅雷下载链接"
+        out.append(MagnetLink(label=label[:80], url=url, kind="thunder"))
+
+    # 4. 直接 .torrent 种子链接（<a> 标签指向外部或站内 .torrent）
+    for m in _TORRENT_A_RE.finditer(text):
+        url = m.group(1).strip()
+        label = clean_html(m.group(2)).strip() or url.rsplit("/", 1)[-1]
+        out.append(MagnetLink(label=label[:80], url=url, kind="torrent"))
+
     dedup, seen = [], set()
     for ml in out:
         if ml.url in seen:

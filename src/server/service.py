@@ -300,11 +300,28 @@ class ServerService:
 
     def fetch_item_detail(self, detail_url: str, module_id: str = "") -> Optional[dict]:
         """抓取单条详情页磁力。"""
-        module = get_module(module_id) if module_id else None
+        if not detail_url:
+            return None
+
+        # 智能根据 detail_url 域名精准推导或矫正目标模块
+        url_low = (detail_url or "").lower()
+        detected = None
+        if "1lou." in url_low or "btbtt" in url_low:
+            detected = "lou1"
+        elif "dygang." in url_low:
+            detected = "dygang"
+        elif "dyg7." in url_low:
+            detected = "dyg7"
+        elif any(k in url_low for k in ("hao6v", "6v520", "6vdy", "xb6v", "66vod")):
+            detected = "hao6v"
+
+        module = get_module(detected) if detected else None
+        if module is None and module_id:
+            module = get_module(module_id)
         if module is None:
             cur = self.db.current_site()
             module = get_module(getattr(cur, "module_id", "") or "")
-        if module is None or not detail_url:
+        if module is None:
             return None
 
         item = ParseItem(detail_url=detail_url)
@@ -343,6 +360,7 @@ class ServerService:
                 sites=site_ids,
                 max_pages=max_pages,
                 log_cb=log_cb,
+                auto_detail=15,
             )
             items = res.get("items", [])
             for it in items:

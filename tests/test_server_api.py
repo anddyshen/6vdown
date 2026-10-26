@@ -193,6 +193,27 @@ class TestServerService(unittest.TestCase):
         res_empty = self.service.search(keyword="")
         self.assertEqual(res_empty.get("items"), [])
 
+    def test_fetch_item_detail_auto_module_detection(self):
+        """测试详情抓取能根据不同站点的 detail_url 域名自动识别对应解析模块。"""
+        from unittest.mock import patch
+
+        fake_html_dygang = '<html><body><table bgcolor="#0099cc"><tr><td><a href="magnet:?xt=urn:btih:dygang1234567890abcdef1234567890abcdef12">dygang分集.mp4</a></td></tr></table></body></html>'
+        fake_html_lou1 = '<html><body><div class="message break-all"><p>内容</p></div><ul class="attachlist"><li><a href="attach-download-999.htm">种子.torrent</a></li></ul></body></html>'
+
+        with patch.object(self.service.fetcher, "get") as mock_get:
+            # 1. dygang 详情页
+            mock_get.return_value = (fake_html_dygang, 200)
+            res1 = self.service.fetch_item_detail("https://www.dygang.tv/dsj/123.htm")
+            self.assertIsNotNone(res1)
+            self.assertGreater(len(res1["magnets"]), 0)
+
+            # 2. 1lou 详情页（无需显式传 module_id 也可自动按域名路由到 lou1 模块）
+            mock_get.return_value = (fake_html_lou1, 200)
+            res2 = self.service.fetch_item_detail("https://www.1lou.me/thread-888.htm")
+            self.assertIsNotNone(res2)
+            self.assertGreater(len(res2["magnets"]), 0)
+            self.assertIn("attach-download-999.htm", res2["magnets"][0]["url"])
+
 
 if __name__ == "__main__":
     unittest.main()

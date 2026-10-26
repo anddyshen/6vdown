@@ -677,12 +677,12 @@
           <div v-for="(m, i) in detailModal.magnets" :key="i" class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs gap-2">
             <div class="min-w-0 flex-1">
               <div class="font-mono text-slate-800 font-medium truncate select-all">{{ m.label || m.url }}</div>
-              <div v-if="m.label && m.label !== m.url" class="font-mono text-[11px] text-slate-400 truncate select-all">{{ m.url }}</div>
+              <div v-if="m.label && m.url && m.label !== m.url" class="font-mono text-[11px] text-slate-400 truncate select-all">{{ m.url }}</div>
             </div>
             <div class="flex items-center space-x-1 shrink-0">
-              <a v-if="m.url.startsWith('http')" :href="m.url" target="_blank" download class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded inline-block text-center font-semibold" title="直接在浏览器打开/下载种子">打开下载</a>
-              <button @click="copyText(m.url)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-semibold" title="复制链接到剪贴板">复制</button>
-              <button @click="downloadMagnet(m.url, null, m.label, '', detailModal.title, m.label, detailModal.block, detailModal.site_key)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded font-semibold">下载</button>
+              <a v-if="m.url && String(m.url).startsWith('http')" :href="m.url" target="_blank" download class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded inline-block text-center font-semibold" title="直接在浏览器打开/下载种子">打开下载</a>
+              <button @click="copyText(m.url || m)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-semibold" title="复制链接到剪贴板">复制</button>
+              <button @click="downloadMagnet(m.url || m, null, m.label || '', '', detailModal.title, m.label || '', detailModal.block, detailModal.site_key)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded font-semibold">下载</button>
             </div>
           </div>
           <div v-if="!detailModal.magnets.length" class="text-center text-slate-400 py-8">
@@ -1221,22 +1221,29 @@
         }
 
         async function openItemDetail(item) {
+          const hasMagnets = Boolean(item.magnets && item.magnets.length);
           detailModal.value = {
             show: true,
             title: item.title,
             magnets: item.magnets || [],
-            loading: !item.magnets_count,
+            loading: !hasMagnets,
             block: item.block || '',
             site_key: item.site_key || ''
           };
-          if (!item.magnets || !item.magnets.length) {
+          if (!hasMagnets) {
             try {
               const res = await authFetch('/api/workbench/detail', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ detail_url: item.detail_url, module_id: item.site_key || '' })
               }).then(r => r.json());
-              detailModal.value.magnets = res.magnets || [];
+              if (res && res.magnets && res.magnets.length) {
+                detailModal.value.magnets = res.magnets;
+                item.magnets = res.magnets;
+                item.magnets_count = res.magnets.length;
+              } else {
+                detailModal.value.magnets = [];
+              }
             } catch (e) {
               showMsg('抓取分集磁力失败', true);
             } finally {

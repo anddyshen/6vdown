@@ -14,6 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.models import ParseItem  # noqa: E402
 from src.site.modules import get_module, list_modules  # noqa: E402
 from src.site.modules.dygang import DygangModule, parse_home  # noqa: E402
 
@@ -173,6 +174,21 @@ class TestDygangParsing(unittest.TestCase):
     def test_empty_html(self):
         self.assertEqual(parse_home("", SITE), [])
         self.assertEqual(parse_home("<html><body>无日期</body></html>", SITE), [])
+
+    def test_parse_detail(self):
+        m = DygangModule()
+        it = ParseItem(title="繁花", detail_url="https://www.dygang.tv/dsj/123.htm")
+        html = """<html><body>
+        <div id="text">◎简　　介 这是繁花简介</div>
+        <table bgcolor="#0099cc"><tr><td>
+        <a href="magnet:?xt=urn:btih:abc1234567890abcdef1234567890abcdef12345">繁花.EP01.1080p.mkv</a>
+        <a href="https://pan.quark.cn/s/xyz">夸克网盘</a>
+        </td></tr></table>
+        </body></html>"""
+        m.parse_detail(html, it)
+        self.assertEqual(len(it.magnets), 2)
+        self.assertEqual(it.magnets[0].url, "magnet:?xt=urn:btih:abc1234567890abcdef1234567890abcdef12345")
+        self.assertEqual(it.magnets[1].url, "https://pan.quark.cn/s/xyz")
 
 
 if __name__ == "__main__":
