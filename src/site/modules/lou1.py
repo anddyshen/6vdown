@@ -87,7 +87,7 @@ _DATE_RE = re.compile(
 
 # 帖子正文资源
 _ATTACH_A_RE = re.compile(
-    r'<a\b[^>]*href="([^"]*(?:attach-download|/download/|download\.php)[^"]*)"'
+    r'<a\b[^>]*href=["\']?([^"\' >]*(?:attach-download|/download/|download\.php|\.torrent)[^"\' >]*)["\']?'
     r'[^>]*>(.*?)</a>', re.S | re.I)
 # 网盘域名与提取码识别统一维护在 src/site/netdisk.py（各站共用）
 _MESSAGE_RE = re.compile(
@@ -342,9 +342,18 @@ def extract_resources(html: str, base_url: str, title: str = "") -> list:
     scope = _message_scope(html or "")
     for ml in parse_detail_magnets(scope):
         _add(ml.label, ml.url, "magnet")
-    for m in _ATTACH_A_RE.finditer(scope):
+    # Xiuno 附件（attach-download-*.htm / .torrent）在页面中多位于帖子正文下方
+    # 或附件列表 <ul class="attachlist">，在此对全文进行扫描提取
+    for m in _ATTACH_A_RE.finditer(html or ""):
         url = urljoin(base_url, m.group(1).strip())
-        name = clean_html(m.group(2)) or url.rsplit("/", 1)[-1]
+        name = clean_html(m.group(2)).strip()
+        if not name or len(name) < 2 or name in ("下载附件", "附件", "下载", "点击下载"):
+            after_text = (html or "")[m.end():m.end() + 200]
+            m_fn = re.search(r'([^\s<>"\']+\.torrent)', after_text, re.I)
+            if not m_fn:
+                before_text = (html or "")[max(0, m.start() - 150):m.start()]
+                m_fn = re.search(r'([^\s<>"\']+\.torrent)', before_text, re.I)
+            name = m_fn.group(1).strip() if m_fn else (name or url.rsplit("/", 1)[-1])
         # Xiuno 附件 URL 形如 attach-download-3000427.htm，不带后缀；
         # 1LOU 的附件绝大多数就是 .torrent 种子（点击即下载），故默认按
         # 种子处理（可发送）；仅当链接文字/标题明确指向网盘时才归为 pan。

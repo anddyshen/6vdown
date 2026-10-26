@@ -420,6 +420,8 @@ class SiteParseService:
                 if not key or key in seen:
                     continue
                 seen.add(key)
+                if not getattr(it, "site_key", ""):
+                    it.site_key = mid
                 merged.append(it)
                 pairs.append((mid, it))
         # 结果缓存：同关键词短期内复用，避免反复触发站点节流

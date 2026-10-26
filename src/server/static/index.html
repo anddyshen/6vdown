@@ -91,7 +91,17 @@
               <select v-model="selectedSiteId" @change="switchSite" class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-500 outline-none">
                 <option v-for="s in sites" :key="s.id" :value="s.id">{{ s.name }} {{ s.is_current ? '（默认）' : '' }}</option>
               </select>
-              <input v-model="filterKeyword" type="text" placeholder="快速过滤当前条目..." class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 w-48 sm:w-64" />
+              <input v-model="filterKeyword" type="text" placeholder="快速过滤当前条目..." class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-1.5 outline-none focus:ring-2 focus:ring-indigo-500 w-40 sm:w-56" />
+
+              <!-- 推荐与经典 过滤按钮 -->
+              <button @click="filterIsRed = !filterIsRed" class="px-2.5 py-1 text-xs rounded-lg border transition flex items-center space-x-1" :class="filterIsRed ? 'bg-red-600 text-white border-red-600 shadow-sm font-bold' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'">
+                <span>🔥 推荐</span>
+                <span class="text-[10px] px-1 rounded-full" :class="filterIsRed ? 'bg-white/20' : 'bg-red-200 text-red-800'">{{ redCount }}</span>
+              </button>
+              <button @click="filterIsClassic = !filterIsClassic" class="px-2.5 py-1 text-xs rounded-lg border transition flex items-center space-x-1" :class="filterIsClassic ? 'bg-amber-600 text-white border-amber-600 shadow-sm font-bold' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'">
+                <span>⭐ 经典</span>
+                <span class="text-[10px] px-1 rounded-full" :class="filterIsClassic ? 'bg-white/20' : 'bg-amber-200 text-amber-900'">{{ classicCount }}</span>
+              </button>
             </div>
 
             <div class="flex items-center space-x-2">
@@ -287,9 +297,16 @@
       <!-- ------------------------------------------------ 跨站搜索 ------------------------------------------------ -->
       <section v-if="tab === 'search'" class="space-y-4">
         <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
-          <div class="flex gap-2">
+          <div class="flex flex-col sm:flex-row gap-2">
+            <div class="flex items-center space-x-1.5 shrink-0">
+              <span class="text-xs font-semibold text-slate-500 whitespace-nowrap">搜索目标:</span>
+              <select v-model="searchSiteId" class="bg-slate-100 border border-slate-300 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500">
+                <option :value="null">🌐 全部可用站点</option>
+                <option v-for="s in sites" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
             <input v-model="searchKeyword" @keyup.enter="doSearch" type="text" placeholder="输入影视名称（如 繁花 / 人生复本 / 狂飙）..." class="flex-1 bg-slate-100 border border-slate-300 rounded-lg px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
-            <button @click="doSearch" :disabled="searching" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded-lg text-sm transition shadow flex items-center">
+            <button @click="doSearch" :disabled="searching" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-2 rounded-lg text-sm transition shadow flex items-center justify-center">
               <span v-if="searching" class="animate-spin mr-1">⟳</span>
               <span>{{ searching ? '搜索中...' : '搜索' }}</span>
             </button>
@@ -301,15 +318,19 @@
             <thead class="bg-slate-50 text-slate-500 text-left">
               <tr>
                 <th class="py-3 px-4 font-semibold">匹配影视标题</th>
-                <th class="py-3 px-3 font-semibold">日期</th>
-                <th class="py-3 px-3 font-semibold text-center">分集磁力</th>
-                <th class="py-3 px-4 font-semibold text-right">操作</th>
+                <th class="py-3 px-3 font-semibold w-32">来源站点</th>
+                <th class="py-3 px-3 font-semibold w-28">日期</th>
+                <th class="py-3 px-3 font-semibold text-center w-24">分集磁力</th>
+                <th class="py-3 px-4 font-semibold text-right w-40">操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               <tr v-for="(it, i) in searchResults" :key="i" class="hover:bg-slate-50 transition">
                 <td class="py-3 px-4">
                   <a :href="it.detail_url" target="_blank" class="font-medium text-slate-800 hover:text-indigo-600">{{ it.title }}</a>
+                </td>
+                <td class="py-3 px-3 whitespace-nowrap">
+                  <span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded font-semibold">{{ getSiteName(it.site_key) || it.site_key || '默认' }}</span>
                 </td>
                 <td class="py-3 px-3 text-slate-500 whitespace-nowrap">{{ it.date }}</td>
                 <td class="py-3 px-3 text-center">
@@ -654,9 +675,13 @@
 
         <div class="overflow-y-auto space-y-2 flex-1 pr-1">
           <div v-for="(m, i) in detailModal.magnets" :key="i" class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs gap-2">
-            <span class="font-mono text-slate-700 truncate select-all">{{ m.label || m.url }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="font-mono text-slate-800 font-medium truncate select-all">{{ m.label || m.url }}</div>
+              <div v-if="m.label && m.label !== m.url" class="font-mono text-[11px] text-slate-400 truncate select-all">{{ m.url }}</div>
+            </div>
             <div class="flex items-center space-x-1 shrink-0">
-              <button @click="copyText(m.url)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded">复制</button>
+              <a v-if="m.url.startsWith('http')" :href="m.url" target="_blank" download class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded inline-block text-center font-semibold" title="直接在浏览器打开/下载种子">打开下载</a>
+              <button @click="copyText(m.url)" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded font-semibold" title="复制链接到剪贴板">复制</button>
               <button @click="downloadMagnet(m.url, null, m.label, '', detailModal.title, m.label, detailModal.block, detailModal.site_key)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded font-semibold">下载</button>
             </div>
           </div>
@@ -1093,6 +1118,12 @@
         const sortField = ref('date');
         const sortAsc = ref(false);
 
+        // 推荐与经典快捷筛选
+        const filterIsRed = ref(false);
+        const filterIsClassic = ref(false);
+        const redCount = computed(() => (items.value || []).filter(it => it.is_red).length);
+        const classicCount = computed(() => (items.value || []).filter(it => it.is_classic).length);
+
         function toggleSort(field) {
           if (sortField.value === field) {
             sortAsc.value = !sortAsc.value;
@@ -1107,6 +1138,14 @@
           if (filterKeyword.value.trim()) {
             const k = filterKeyword.value.trim().toLowerCase();
             list = list.filter(it => (it.title && it.title.toLowerCase().includes(k)) || (it.desc && it.desc.toLowerCase().includes(k)));
+          }
+
+          // 推荐与经典筛选
+          if (filterIsRed.value) {
+            list = list.filter(it => it.is_red);
+          }
+          if (filterIsClassic.value) {
+            list = list.filter(it => it.is_classic);
           }
 
           // 区块筛选：仅显示勾选的区块，未勾选的不显示
@@ -1293,14 +1332,26 @@
           showMsg(`🎉 已成功下发全部 ${up.missing_history.length} 个分集！`);
         }
 
+        const searchSiteId = ref(null);
+
+        function getSiteName(key) {
+          if (!key) return '';
+          const s = (sites.value || []).find(x => x.module_id === key || String(x.id) === String(key) || x.name === key);
+          return s ? s.name : key;
+        }
+
         async function doSearch() {
           if (!searchKeyword.value.trim()) return;
           searching.value = true;
           try {
+            const body = { keyword: searchKeyword.value.trim() };
+            if (searchSiteId.value) {
+              body.site_ids = [searchSiteId.value];
+            }
             const res = await authFetch('/api/search', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ keyword: searchKeyword.value.trim() })
+              body: JSON.stringify(body)
             }).then(r => r.json());
             searchResults.value = res.items || [];
           } finally {
@@ -1448,6 +1499,7 @@
 
         return {
           tab, tabClass, sites, selectedSiteId, switchSite, filterKeyword,
+          filterIsRed, filterIsClassic, redCount, classicCount,
           openLogs, parseStatus, triggerParse, forceFullRefresh, items, filteredItems,
           sortField, sortAsc, toggleSort,
           selectedBlocks, availableBlocksList, isAllBlocksSelected, toggleAllBlocks, toggleBlock,
@@ -1457,7 +1509,7 @@
           loginModal, loginForm, submitLogin, logoutAuth, authRequired, currentUser,
           openItemDetail, quickSubscribe, subs, subUpdates, checkingSubs,
           checkSub, checkAllSubs, deleteSub, downloadMagnet, downloadAllMissing,
-          searchKeyword, searching, searchResults, doSearch, config, hosts,
+          searchKeyword, searching, searchResults, doSearch, searchSiteId, getSiteName, config, hosts,
           availableBlocks, dataDir, qualityList, moveQuality, saveConfig,
           testEmby, testHostDirect, activateHost, deleteHost, resetCache,
           detailModal, hostModal, openCreateHost, openEditHost, onHostTypeChange,

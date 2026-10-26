@@ -180,6 +180,19 @@ class TestServerService(unittest.TestCase):
         n4 = format_download_name("magnet:?xt=urn:btih:abc", title="热辣滚烫", ep_label="HD1080P国语中字.mp4")
         self.assertEqual(n4, "《热辣滚烫》 HD1080P国语中字.mp4")
 
+    def test_search_site_selection(self):
+        """测试搜索接口支持按指定 site_ids 搜索或全站搜索。"""
+        sites = self.service.get_sites()
+        first_site_id = sites[0]["id"]
+        # 指定单个 site_id 搜索
+        res = self.service.search(keyword="", site_ids=[first_site_id])
+        self.assertIn("items", res)
+        self.assertIn("logs", res)
+
+        # 搜索空关键词
+        res_empty = self.service.search(keyword="")
+        self.assertEqual(res_empty.get("items"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

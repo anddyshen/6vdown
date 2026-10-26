@@ -147,6 +147,26 @@ class TestLou1Detail(unittest.TestCase):
         self.assertTrue(all(isinstance(m, MagnetLink) for m in mags))
         self.assertIn("导火线", extract_desc(THREAD_HTML))
 
+    def test_extract_tail_attachments(self):
+        """测试在帖子正文 message 之外/网页尾部的附件列表与 .torrent 链接提取。"""
+        html = """<html><body>
+        <div class="message break-all"><p>这是正文内容</p></div>
+        <fieldset class="fieldset"><legend>附件列表：</legend>
+        <ul class="attachlist">
+          <li aid="382067"><a href="attach-download-382067.htm" target="_blank">繁花.Ep01-10.1080p.WEB-DL.H264.torrent</a></li>
+          <li aid="382068"><a href="attach-download-382068.htm" target="_blank"><i class="icon filetype torrent"></i></a> 繁花.Ep11-20.torrent</li>
+        </ul>
+        </fieldset>
+        </body></html>"""
+        res = extract_resources(html, SITE, "繁花")
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0].url, "https://www.1lou.me/attach-download-382067.htm")
+        self.assertEqual(res[0].kind, "torrent")
+        self.assertIn("繁花.Ep01-10", res[0].label)
+        self.assertEqual(res[1].url, "https://www.1lou.me/attach-download-382068.htm")
+        self.assertEqual(res[1].kind, "torrent")
+        self.assertIn("繁花.Ep11-20.torrent", res[1].label)
+
 
 class TestLou1Meta(unittest.TestCase):
     def test_meta_and_registry(self):
