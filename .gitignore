@@ -32,6 +32,7 @@ config.json
 build/
 dist/
 *.spec
+!6vdown.spec
 *.egg-info/
 
 # 图标缓存与临时文件
