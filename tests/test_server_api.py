@@ -214,6 +214,52 @@ class TestServerService(unittest.TestCase):
             self.assertGreater(len(res2["magnets"]), 0)
             self.assertIn("attach-download-999.htm", res2["magnets"][0]["url"])
 
+    def tearDown(self):
+        if hasattr(self, "service") and getattr(self.service, "_scheduler", None):
+            try:
+                self.service._scheduler.shutdown(wait=False)
+            except Exception:
+                pass
+
+    def test_fetch_item_detail_retry(self):
+        """测试详情抓取支持重试机制（第一次超时/异常后第二次成功）。"""
+        from unittest.mock import patch
+        fake_html = '<html><body><a href="magnet:?xt=urn:btih:retry1234567890abcdef1234567890abcdef12">第01集</a></body></html>'
+
+        target_url = "https://www.hao6v.cc/dy/1.html"
+        target_calls = 0
+        def fake_get(url, *args, **kwargs):
+            nonlocal target_calls
+            if url == target_url:
+                target_calls += 1
+                if target_calls == 1:
+                    raise TimeoutError("Simulated timeout on first attempt")
+            return (fake_html, 200)
+
+        with patch.object(self.service.fetcher, "get", side_effect=fake_get):
+            res = self.service.fetch_item_detail(target_url)
+            self.assertIsNotNone(res)
+            self.assertEqual(target_calls, 2)
+            self.assertEqual(len(res["magnets"]), 1)
+
+    def test_session_persistence(self):
+        """测试服务端登录会话跨重启持久化。"""
+        from src.server.app import LoginRequest, VerifyRequest, create_app
+
+        app1 = create_app()
+        login_fn1 = next(r.endpoint for r in app1.routes if getattr(r, "path", None) == "/api/auth/login")
+        verify_fn1 = next(r.endpoint for r in app1.routes if getattr(r, "path", None) == "/api/auth/verify")
+
+        # 模拟登录
+        login_res = login_fn1(LoginRequest(username="admin", password=""))
+        if login_res.get("ok"):
+            token = login_res["token"]
+            # 重新实例化 app（模拟服务重启，应从数据库读取持久化 session）
+            app2 = create_app()
+            verify_fn2 = next(r.endpoint for r in app2.routes if getattr(r, "path", None) == "/api/auth/verify")
+            verify_res = verify_fn2(VerifyRequest(token=token))
+            self.assertTrue(verify_res.get("ok"))
+
 
 if __name__ == "__main__":
     unittest.main()

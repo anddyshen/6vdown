@@ -119,15 +119,21 @@ class TestDetailParser(unittest.TestCase):
         <a href="http://xz.66vod.net:889/2017/test.torrent">全集.1080p.WEB-DL.torrent</a>
         <a href="ed2k://|file|%E7%B9%81%E8%8A%B1.EP01.1080p.mkv|1000|ABC|/">第01集</a>
         <a href="thunder://QUFodHRwOi8veHh4L2FiYy5tcDdaWg==">迅雷高速下载</a>
+        <a href="ftp://ygdy8:ygdy8@yg45.dydytt.net:1234/test.mp4">FTP经典电影</a>
+        <a href="MAGNET:?dn=Movie.Name&XT=URN:BTIH:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC">大写参数磁力</a>
         </div>"""
         ms = parse_detail_magnets(html)
-        self.assertEqual(len(ms), 3)
-        self.assertEqual(ms[0].kind, "ed2k")
-        self.assertEqual(ms[0].label, "第01集")
-        self.assertEqual(ms[1].kind, "thunder")
-        self.assertEqual(ms[1].label, "迅雷高速下载")
-        self.assertEqual(ms[2].kind, "torrent")
-        self.assertIn("test.torrent", ms[2].url)
+        self.assertEqual(len(ms), 5)
+        self.assertEqual(ms[0].kind, "magnet")
+        self.assertEqual(ms[0].label, "大写参数磁力")
+        self.assertEqual(ms[1].kind, "ed2k")
+        self.assertEqual(ms[1].label, "第01集")
+        self.assertEqual(ms[2].kind, "thunder")
+        self.assertEqual(ms[2].label, "迅雷高速下载")
+        self.assertEqual(ms[3].kind, "torrent")
+        self.assertIn("test.torrent", ms[3].url)
+        self.assertEqual(ms[4].kind, "ftp")
+        self.assertIn("ftp://", ms[4].url)
 
 
 if __name__ == "__main__":

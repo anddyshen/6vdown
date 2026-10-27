@@ -57,6 +57,7 @@ class EmbyTestRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = ""
     password: str = ""
+    remember: bool = True
 
 
 class VerifyRequest(BaseModel):
@@ -77,7 +78,27 @@ def create_app() -> FastAPI:
 
     # 全局服务实例
     service = ServerService()
-    active_sessions: set[str] = set()
+
+    def _load_sessions() -> set[str]:
+        raw = service.db.get_setting("active_sessions", "")
+        if raw:
+            try:
+                import json
+                s = json.loads(raw)
+                if isinstance(s, list):
+                    return set(s)
+            except Exception:
+                pass
+        return set()
+
+    active_sessions: set[str] = _load_sessions()
+
+    def _save_sessions():
+        try:
+            import json
+            service.db.set_setting("active_sessions", json.dumps(list(active_sessions)))
+        except Exception:
+            pass
 
     def _get_auth_creds():
         username = (
@@ -154,6 +175,7 @@ def create_app() -> FastAPI:
             import secrets
             session_token = secrets.token_hex(24)
             active_sessions.add(session_token)
+            _save_sessions()
             return {"ok": True, "token": session_token, "username": username, "auth_required": True}
         return {"ok": False, "error": "用户名或密码错误", "auth_required": True}
 
@@ -183,6 +205,7 @@ def create_app() -> FastAPI:
         token = (req.token if req else "") or ""
         if token in active_sessions:
             active_sessions.discard(token)
+            _save_sessions()
         return {"ok": True}
 
     @app.get("/api/status")

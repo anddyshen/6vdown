@@ -685,8 +685,14 @@
               <button @click="downloadMagnet(m.url || m, null, m.label || '', '', detailModal.title, m.label || '', detailModal.block, detailModal.site_key)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded font-semibold">下载</button>
             </div>
           </div>
-          <div v-if="!detailModal.magnets.length" class="text-center text-slate-400 py-8">
-            {{ detailModal.loading ? '正在抓取分集磁力……' : '未检测到可下载链接。' }}
+          <div v-if="!detailModal.magnets.length" class="text-center text-slate-400 py-8 space-y-2">
+            <div>{{ detailModal.loading ? '正在抓取分集资源……' : '未检测到可下载链接。' }}</div>
+            <div v-if="!detailModal.loading">
+              <button @click="reFetchDetail()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg font-medium transition inline-flex items-center space-x-1 shadow-sm">
+                <span>⟳</span>
+                <span>重新抓取</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -774,6 +780,12 @@
             <label class="block text-xs font-semibold text-slate-600 mb-1">登录密码</label>
             <input v-model="loginForm.password" @keyup.enter="submitLogin" type="password" placeholder="请输入密码..." class="w-full bg-slate-100 border border-slate-300 rounded-lg px-3.5 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 transition font-mono" />
           </div>
+          <div class="flex items-center justify-between text-xs text-slate-600 pt-0.5">
+            <label class="flex items-center space-x-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="loginForm.remember" class="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" />
+              <span>记住密码（下次免重复输入）</span>
+            </label>
+          </div>
           <p v-if="loginForm.error" class="text-xs text-rose-500 text-center font-medium bg-rose-50 py-1.5 rounded-lg border border-rose-200">{{ loginForm.error }}</p>
         </div>
 
@@ -795,7 +807,14 @@
         const authRequired = ref(false);
         const currentUser = ref('');
         const loginModal = ref({ show: false });
-        const loginForm = ref({ username: 'admin', password: '', error: '', loading: false });
+        const savedRemember = localStorage.getItem('6vdown_remember') === '1';
+        const loginForm = ref({
+          username: localStorage.getItem('6vdown_saved_user') || 'admin',
+          password: savedRemember ? (localStorage.getItem('6vdown_saved_pwd') || '') : '',
+          remember: savedRemember,
+          error: '',
+          loading: false
+        });
 
         async function checkAuthStatus() {
           try {
@@ -810,8 +829,18 @@
                 currentUser.value = res.username || 'admin';
                 loginModal.value.show = false;
               } else {
+                // 如果开启了记住密码且本地已保存密码，尝试自动静默登录
+                const remember = localStorage.getItem('6vdown_remember') === '1';
+                const savedUser = localStorage.getItem('6vdown_saved_user');
+                const savedPwd = localStorage.getItem('6vdown_saved_pwd');
+                if (remember && savedUser && savedPwd) {
+                  loginForm.value.username = savedUser;
+                  loginForm.value.password = savedPwd;
+                  loginForm.value.remember = true;
+                  const autoOk = await submitLogin(true);
+                  if (autoOk) return;
+                }
                 loginModal.value.show = true;
-                loginForm.value.password = '';
                 loginForm.value.error = '';
               }
             } else {
@@ -822,34 +851,60 @@
           }
         }
 
-        async function submitLogin() {
+        async function submitLogin(silent = false) {
           if (!loginForm.value.password.trim()) {
-            loginForm.value.error = '请输入登录密码';
-            return;
+            if (!silent) loginForm.value.error = '请输入登录密码';
+            return false;
           }
           loginForm.value.loading = true;
           loginForm.value.error = '';
           try {
+            const user = loginForm.value.username.trim() || 'admin';
+            const pwd = loginForm.value.password;
             const res = await fetch('/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                username: loginForm.value.username.trim(),
-                password: loginForm.value.password
+                username: user,
+                password: pwd,
+                remember: loginForm.value.remember
               })
             }).then(r => r.json());
             if (res.ok) {
               authToken.value = res.token;
               localStorage.setItem('6vdown_token', res.token);
-              currentUser.value = res.username || loginForm.value.username;
+              currentUser.value = res.username || user;
               loginModal.value.show = false;
-              showMsg(`欢迎回来，${currentUser.value}！`);
+              loginForm.value.error = '';
+
+              if (loginForm.value.remember) {
+                localStorage.setItem('6vdown_remember', '1');
+                localStorage.setItem('6vdown_saved_user', user);
+                localStorage.setItem('6vdown_saved_pwd', pwd);
+              } else {
+                localStorage.removeItem('6vdown_remember');
+                localStorage.removeItem('6vdown_saved_pwd');
+                loginForm.value.password = '';
+              }
+
+              if (!silent) {
+                showMsg(`欢迎回来，${currentUser.value}！`);
+              }
               initAll();
+              return true;
             } else {
+              if (silent) {
+                loginModal.value.show = true;
+              }
               loginForm.value.error = res.error || '用户名或密码错误';
+              return false;
             }
           } catch (e) {
+            if (silent) {
+              loginModal.value.show = true;
+            }
             loginForm.value.error = '登录请求失败: ' + e;
+            return false;
           } finally {
             loginForm.value.loading = false;
           }
@@ -869,8 +924,10 @@
           localStorage.removeItem('6vdown_token');
           localStorage.removeItem('6vdown_api_token');
           loginModal.value.show = true;
-          loginForm.value.password = '';
           loginForm.value.error = '';
+          if (!loginForm.value.remember) {
+            loginForm.value.password = '';
+          }
         }
 
         async function authFetch(url, options = {}) {
@@ -1220,34 +1277,46 @@
           }
         }
 
+        async function reFetchDetail() {
+          if (!detailModal.value.detail_url) return null;
+          detailModal.value.loading = true;
+          try {
+            const res = await authFetch('/api/workbench/detail', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ detail_url: detailModal.value.detail_url, module_id: detailModal.value.site_key || '' })
+            }).then(r => r.json());
+            if (res && res.magnets && res.magnets.length) {
+              detailModal.value.magnets = res.magnets;
+              showMsg(`成功抓取到 ${res.magnets.length} 条资源`);
+              return res.magnets;
+            } else {
+              detailModal.value.magnets = [];
+            }
+          } catch (e) {
+            showMsg('抓取分集资源失败，请稍后重试', true);
+          } finally {
+            detailModal.value.loading = false;
+          }
+          return null;
+        }
+
         async function openItemDetail(item) {
           const hasMagnets = Boolean(item.magnets && item.magnets.length);
           detailModal.value = {
             show: true,
             title: item.title,
+            detail_url: item.detail_url || '',
             magnets: item.magnets || [],
             loading: !hasMagnets,
             block: item.block || '',
             site_key: item.site_key || ''
           };
           if (!hasMagnets) {
-            try {
-              const res = await authFetch('/api/workbench/detail', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ detail_url: item.detail_url, module_id: item.site_key || '' })
-              }).then(r => r.json());
-              if (res && res.magnets && res.magnets.length) {
-                detailModal.value.magnets = res.magnets;
-                item.magnets = res.magnets;
-                item.magnets_count = res.magnets.length;
-              } else {
-                detailModal.value.magnets = [];
-              }
-            } catch (e) {
-              showMsg('抓取分集磁力失败', true);
-            } finally {
-              detailModal.value.loading = false;
+            const mags = await reFetchDetail();
+            if (mags && mags.length) {
+              item.magnets = mags;
+              item.magnets_count = mags.length;
             }
           }
         }

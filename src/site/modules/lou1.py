@@ -361,6 +361,10 @@ def extract_resources(html: str, base_url: str, title: str = "") -> list:
     # 正文里的网盘地址（<a> 链接与纯文本都覆盖；URL 未带 pwd 时补正文提取码）
     for ml in extract_pan_links(scope):
         _add(ml.label, ml.url, "pan")
+    # 兜底：若正文区被意外截断且未找到任何网盘链接，对全页做兜底扫描
+    if not any(item.kind == "pan" for item in out):
+        for ml in extract_pan_links(html or ""):
+            _add(ml.label, ml.url, "pan")
     return out
 
 

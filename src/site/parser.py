@@ -24,9 +24,13 @@ _A_RE = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.S)
 _HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.I)
 _YMD_RE = re.compile(r"(?<![0-9])(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})")
 _MD_RE = re.compile(r"(?<![0-9])(\d{1,2})-(\d{1,2})(?!\d)")
-_MAGNET_RE = re.compile(r"magnet:\?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}")
+_MAGNET_RE = re.compile(
+    r"magnet:\?(?:[^\s\"'<>]*&)?xt=urn:[a-z0-9]+:[A-Za-z0-9_-]{16,}[^\s\"'<>]*",
+    re.I,
+)
 _ED2K_RE = re.compile(r"ed2k://\|file\|[^\s\"'<>]+", re.I)
 _THUNDER_RE = re.compile(r"thunder://[a-zA-Z0-9+/=]+", re.I)
+_FTP_RE = re.compile(r"ftp://[^\s\"'<>]+", re.I)
 _TORRENT_A_RE = re.compile(r'<a\b[^>]*href=["\']?([^"\' >]+\.torrent(?:[?][^"\' >]*)?)["\']?[^>]*>(.*?)</a>', re.I | re.S)
 _RED_RE = re.compile(constants.RED_RE_STR, re.I)
 _DN_RE = re.compile(r"[?&]dn=([^&\s]+)")
@@ -298,6 +302,14 @@ def parse_detail_magnets(html: str) -> list:
         url = m.group(1).strip()
         label = clean_html(m.group(2)).strip() or url.rsplit("/", 1)[-1]
         out.append(MagnetLink(label=label[:80], url=url, kind="torrent"))
+
+    # 5. FTP 链接（老电影/剧集专用下载地址）
+    for m in _FTP_RE.finditer(text):
+        url = m.group(0).rstrip("，。,.；;）)】]》>")
+        label = _label_for_magnet(text, m.start())
+        if not label:
+            label = unquote(url.rsplit("/", 1)[-1]) or "FTP下载链接"
+        out.append(MagnetLink(label=label[:80], url=url, kind="ftp"))
 
     dedup, seen = [], set()
     for ml in out:

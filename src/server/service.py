@@ -325,26 +325,41 @@ class ServerService:
             return None
 
         item = ParseItem(detail_url=detail_url)
+        last_exc = None
+        for attempt in range(2):
+            try:
+                html, _ = self.fetcher.get(detail_url, timeout=25)
+                module.parse_detail(html, item)
+                item.detail_ok = True
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+
+        if last_exc is not None:
+            log.warning("抓取详情页异常 (%s): %s", detail_url, last_exc)
+            return None
+
         try:
-            html, _ = self.fetcher.get(detail_url, timeout=14)
-            module.parse_detail(html, item)
-            item.detail_ok = True
             # 更新到数据库
             cur_site = self.db.current_site()
             site_url = cur_site.entries()[0] if cur_site and cur_site.entries() else ""
             if site_url:
                 self.db.update_parse_item_detail(site_url, item)
-            return {
-                "detail_url": item.detail_url,
-                "desc": item.desc,
-                "magnets": [
-                    {"label": m.label, "url": m.url, "kind": getattr(m, "kind", "magnet")}
-                    for m in item.magnets
-                ],
-            }
-        except Exception as e:
-            log.warning("抓取详情页异常 (%s): %s", detail_url, e)
-            return None
+        except Exception:
+            pass
+
+        return {
+            "detail_url": item.detail_url,
+            "desc": item.desc,
+            "magnets": [
+                {"label": m.label, "url": m.url, "kind": getattr(m, "kind", "magnet")}
+                for m in item.magnets
+            ],
+        }
 
     # ------------------------------------------------------------ 跨站搜索
     def search(self, keyword: str, site_ids: Optional[list[int]] = None, max_pages: int = 1) -> dict:
