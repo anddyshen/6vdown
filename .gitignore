@@ -38,6 +38,8 @@ dist/
 # 图标缓存与临时文件
 assets/*.ico
 assets/*.png
+!assets/6vdown.ico
+!assets/6vdown.png
 .pytest_cache/
 .coverage
 htmlcov/

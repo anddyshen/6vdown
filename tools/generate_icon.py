@@ -77,7 +77,8 @@ def create_modern_icon(size=512):
     return img
 
 def main():
-    assets_dir = r"d:\Projects\c2down\assets"
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assets_dir = os.path.join(root_dir, "assets")
     os.makedirs(assets_dir, exist_ok=True)
     
     base_img = create_modern_icon(512)
