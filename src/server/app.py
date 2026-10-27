@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .. import __version__
 from .service import ServerService
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -65,7 +66,7 @@ class VerifyRequest(BaseModel):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="6Vdown Web Server", version="1.0.4")
+    app = FastAPI(title="6Vdown Web Server", version=__version__)
 
     # 允许跨域（方便前端独立开发或同源访问）
     app.add_middleware(
@@ -184,7 +185,7 @@ def create_app() -> FastAPI:
         username, password, api_token = _get_auth_creds()
         auth_required = bool(password or api_token)
         if not auth_required:
-            return {"ok": True, "auth_required": False, "token_required": False, "version": "1.0.4"}
+            return {"ok": True, "auth_required": False, "token_required": False, "version": __version__}
 
         token = (req.token if req else "") or ""
         is_valid = False
@@ -197,7 +198,7 @@ def create_app() -> FastAPI:
             "auth_required": True,
             "token_required": True,
             "username": username if is_valid else "",
-            "version": "1.0.4",
+            "version": __version__,
         }
 
     @app.post("/api/auth/logout")
@@ -214,7 +215,7 @@ def create_app() -> FastAPI:
         active_host = service.db.active_host()
         subs = service.db.list_subscriptions()
         return {
-            "version": "1.0.4",
+            "version": __version__,
             "current_site": cur_site.name if cur_site else "未设置",
             "active_host": f"{active_host.name} ({active_host.type.upper()})" if active_host else "未配置",
             "subscriptions_count": len(subs),
