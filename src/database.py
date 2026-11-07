@@ -584,6 +584,8 @@ class Database:
                     "FROM parse_records WHERE site_url=? AND detail_url=?",
                     (site_url, it.detail_url),
                 ).fetchone()
+                has_p2p = any(getattr(m, "kind", "magnet") != "pan" for m in it.magnets)
+                detail_ok_init = 1 if has_p2p else (1 if (it.detail_ok and not it.magnets) else 0)
                 if row is None:
                     c.execute(
                         "INSERT INTO parse_records(site_url,detail_url,title,date,"
@@ -592,21 +594,22 @@ class Database:
                         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (site_url, it.detail_url, it.title, it.date, it.block,
                          int(it.is_red), int(it.is_classic),
-                         int(bool(it.magnets or it.detail_ok)), it.desc, mags,
+                         detail_ok_init, it.desc, mags,
                          it.first_seen or now, now, it.prev_title or ""),
                     )
                     new_count += 1
                     continue
-                changed = ((row["title"] or "") != (it.title or "")
-                           or (row["date"] or "") != (it.date or ""))
                 if it.detail_ok or it.magnets:
                     desc = it.desc
-                    detail_ok = int(it.detail_ok)
+                    detail_ok = 1 if has_p2p else (1 if (it.detail_ok and not it.magnets) else 0)
                     mag_json = mags
                 else:
                     desc = row["desc"] or ""
                     detail_ok = int(row["detail_ok"] or 0)
                     mag_json = row["magnets_json"] or "[]"
+                changed = ((row["title"] or "") != (it.title or "")
+                           or (row["date"] or "") != (it.date or "")
+                           or (row["magnets_json"] or "[]") != mag_json)
                 prev_title = it.prev_title or (row["title"] if changed else "")
                 c.execute(
                     "UPDATE parse_records SET title=?,date=?,block=?,is_red=?,"
@@ -623,16 +626,38 @@ class Database:
 
     def update_parse_item(self, site_url: str, it: ParseItem) -> None:
         """更新已存在记录的磁力/简介/状态（用于失败补抓）。"""
+        has_p2p = any(getattr(m, "kind", "magnet") != "pan" for m in it.magnets)
+        detail_ok = 1 if has_p2p else (1 if (it.detail_ok and not it.magnets) else 0)
         with self._lock, self._conn() as c:
             c.execute(
-                "UPDATE parse_records SET desc=?, detail_ok=?, magnets_json=? "
-                "WHERE site_url=? AND detail_url=?",
-                (it.desc or "", int(bool(it.magnets or it.detail_ok)),
+                "UPDATE parse_records SET desc=?, detail_ok=?, magnets_json=?, last_seen=? "
+                "WHERE (site_url=? OR site_url='') AND detail_url=?",
+                (it.desc or "", detail_ok,
                  json.dumps([{"label": m.label, "url": m.url,
                               "kind": getattr(m, "kind", "magnet")}
                              for m in it.magnets], ensure_ascii=False),
-                 site_url, it.detail_url),
+                 now_ms(), site_url, it.detail_url),
             )
+
+    def update_parse_item_by_detail_url(self, it: ParseItem) -> bool:
+        """根据 detail_url 精准更新记录的磁力/简介/状态（无论站点入口如何变更均可匹配）。"""
+        if not it.detail_url:
+            return False
+        has_p2p = any(getattr(m, "kind", "magnet") != "pan" for m in it.magnets)
+        detail_ok = 1 if has_p2p else (1 if (it.detail_ok and not it.magnets) else 0)
+        mags_json = json.dumps([{"label": m.label, "url": m.url,
+                                 "kind": getattr(m, "kind", "magnet")}
+                                for m in it.magnets], ensure_ascii=False)
+        with self._lock, self._conn() as c:
+            cur = c.execute(
+                "UPDATE parse_records SET desc=?, detail_ok=?, magnets_json=?, last_seen=? "
+                "WHERE detail_url=?",
+                (it.desc or "", detail_ok, mags_json, now_ms(), it.detail_url),
+            )
+            return cur.rowcount > 0
+
+    # 兼容别名
+    update_parse_item_detail = update_parse_item_by_detail_url
 
     def incomplete_parse_items(self, site_url: str) -> list:
         """曾抓取失败/无磁力的记录（下次解析时补抓）。"""

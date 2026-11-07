@@ -123,6 +123,58 @@ class TestIncrement(unittest.TestCase):
         self.assertEqual(s["updated"], 0)
         self.assertEqual(len(self._by_url(SITE)), 2)
 
+    def test_pan_only_item_retried_for_magnets(self):
+        """测试：初始只有网盘链接的条目，后续解析会自动重试补抓新增的磁力。"""
+        pan_only_detail = """<html><body>
+        <a href="https://pan.quark.cn/s/123456">夸克网盘</a>
+        </body></html>"""
+        self.fetcher.pages = {
+            SITE: home_html(5, "09-02"),
+            MOVIE_URL: DETAIL_HTML,
+            COACH_URL: pan_only_detail,
+        }
+        s1 = self._run()
+        self.assertEqual(s1["new"], 2)
+        rows1 = self._by_url(SITE)
+        coach1 = rows1[COACH_URL]
+        self.assertEqual(len(coach1.magnets), 1)
+        self.assertEqual(coach1.magnets[0].kind, "pan")
+
+        # 站点在详情页中追加了磁力链接（首页标题和日期均未变）
+        with_magnet_detail = """<html><body>
+        <a href="https://pan.quark.cn/s/123456">夸克网盘</a>
+        <a href="magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc">第01集</a>
+        </body></html>"""
+        self.fetcher.pages[COACH_URL] = with_magnet_detail
+        s2 = self._run()
+        # 应该被判定为更新补抓，并包含在 updated_urls 中
+        self.assertIn(COACH_URL, s2["updated_urls"])
+        rows2 = self._by_url(SITE)
+        coach2 = rows2[COACH_URL]
+        self.assertEqual(len(coach2.magnets), 2)
+        kinds = [m.kind for m in coach2.magnets]
+        self.assertIn("magnet", kinds)
+        self.assertIn("pan", kinds)
+
+    def test_update_parse_item_by_detail_url(self):
+        """测试根据 detail_url 精准更新磁力与详情信息。"""
+        from src.models import MagnetLink, ParseItem
+
+        self._prepare(5, "09-02")
+        self._run()
+        it = ParseItem(
+            detail_url=COACH_URL,
+            desc="新描述",
+            magnets=[MagnetLink(label="更新集", url="magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd", kind="magnet")]
+        )
+        ok = self.db.update_parse_item_by_detail_url(it)
+        self.assertTrue(ok)
+        rows = self._by_url(SITE)
+        updated = rows[COACH_URL]
+        self.assertEqual(updated.desc, "新描述")
+        self.assertEqual(len(updated.magnets), 1)
+        self.assertEqual(updated.magnets[0].label, "更新集")
+
 
 if __name__ == "__main__":
     unittest.main()

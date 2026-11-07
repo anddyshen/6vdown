@@ -771,8 +771,10 @@ class SiteParseService:
             if old is None:
                 new_items.append(it)
                 continue
+            has_old_p2p = any(getattr(m, "kind", "magnet") != "pan" for m in (old.magnets or []))
             if ((old.title or "") != (it.title or "")
-                    or (old.date or "") != (it.date or "")):
+                    or (old.date or "") != (it.date or "")
+                    or not has_old_p2p):
                 it.is_update = True
                 it.prev_title = old.title or ""
                 updated_items.append(it)

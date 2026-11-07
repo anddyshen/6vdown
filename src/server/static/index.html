@@ -666,18 +666,31 @@
     <div v-if="detailModal.show" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-5 space-y-4 max-h-[85vh] flex flex-col">
         <div class="flex justify-between items-start border-b pb-3">
-          <div>
+          <div class="pr-2">
             <h3 class="font-bold text-slate-800 text-base leading-tight">{{ detailModal.title }}</h3>
             <p class="text-xs text-slate-500 mt-0.5">共 {{ detailModal.magnets.length }} 条可下载资源</p>
           </div>
-          <button @click="detailModal.show = false" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+          <div class="flex items-center space-x-2 shrink-0">
+            <button @click="reFetchDetail()" :disabled="detailModal.loading" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-medium transition inline-flex items-center space-x-1 shadow-sm disabled:opacity-50" title="从目标网页重新解析最新资源">
+              <span :class="{'animate-spin': detailModal.loading}">⟳</span>
+              <span>{{ detailModal.loading ? '抓取中...' : '重新抓取' }}</span>
+            </button>
+            <button @click="detailModal.show = false" class="text-slate-400 hover:text-slate-600 text-xl font-bold leading-none p-1">&times;</button>
+          </div>
         </div>
 
         <div class="overflow-y-auto space-y-2 flex-1 pr-1">
           <div v-for="(m, i) in detailModal.magnets" :key="i" class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex items-center justify-between text-xs gap-2">
             <div class="min-w-0 flex-1">
-              <div class="font-mono text-slate-800 font-medium truncate select-all">{{ m.label || m.url }}</div>
-              <div v-if="m.label && m.url && m.label !== m.url" class="font-mono text-[11px] text-slate-400 truncate select-all">{{ m.url }}</div>
+              <div class="font-mono text-slate-800 font-medium truncate select-all flex items-center">
+                <span v-if="m.kind === 'pan'" class="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px] font-medium mr-1.5 shrink-0">网盘</span>
+                <span v-else-if="m.kind === 'torrent'" class="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[10px] font-medium mr-1.5 shrink-0">种子</span>
+                <span v-else-if="m.kind === 'ed2k'" class="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded text-[10px] font-medium mr-1.5 shrink-0">电驴</span>
+                <span v-else-if="m.kind === 'ftp'" class="bg-slate-200 text-slate-800 px-1.5 py-0.5 rounded text-[10px] font-medium mr-1.5 shrink-0">FTP</span>
+                <span v-else class="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-[10px] font-medium mr-1.5 shrink-0">磁力</span>
+                <span class="truncate">{{ m.label || m.url }}</span>
+              </div>
+              <div v-if="m.label && m.url && m.label !== m.url" class="font-mono text-[11px] text-slate-400 truncate select-all mt-0.5">{{ m.url }}</div>
             </div>
             <div class="flex items-center space-x-1 shrink-0">
               <a v-if="m.url && String(m.url).startsWith('http')" :href="m.url" target="_blank" download class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 rounded inline-block text-center font-semibold" title="直接在浏览器打开/下载种子">打开下载</a>
@@ -1288,10 +1301,16 @@
             }).then(r => r.json());
             if (res && res.magnets && res.magnets.length) {
               detailModal.value.magnets = res.magnets;
+              // 实时同步更新当前工作台列表条目中该记录的缓存与数量
+              const target = items.value.find(it => it.detail_url === detailModal.value.detail_url);
+              if (target) {
+                target.magnets = res.magnets;
+                target.magnets_count = res.magnets.length;
+              }
               showMsg(`成功抓取到 ${res.magnets.length} 条资源`);
               return res.magnets;
             } else {
-              detailModal.value.magnets = [];
+              showMsg('未检测到可下载链接', true);
             }
           } catch (e) {
             showMsg('抓取分集资源失败，请稍后重试', true);
@@ -1302,17 +1321,18 @@
         }
 
         async function openItemDetail(item) {
-          const hasMagnets = Boolean(item.magnets && item.magnets.length);
+          // 判定是否有真实的 P2P 磁力/种子下载链接（若全为网盘链接或无链接，自动尝试获取最新资源）
+          const hasP2P = Boolean(item.magnets && item.magnets.some(m => (m.kind || 'magnet') !== 'pan'));
           detailModal.value = {
             show: true,
             title: item.title,
             detail_url: item.detail_url || '',
             magnets: item.magnets || [],
-            loading: !hasMagnets,
+            loading: !hasP2P,
             block: item.block || '',
             site_key: item.site_key || ''
           };
-          if (!hasMagnets) {
+          if (!hasP2P) {
             const mags = await reFetchDetail();
             if (mags && mags.length) {
               item.magnets = mags;

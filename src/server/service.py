@@ -344,13 +344,10 @@ class ServerService:
             return None
 
         try:
-            # 更新到数据库
-            cur_site = self.db.current_site()
-            site_url = cur_site.entries()[0] if cur_site and cur_site.entries() else ""
-            if site_url:
-                self.db.update_parse_item_detail(site_url, item)
-        except Exception:
-            pass
+            # 更新到数据库（精准根据 detail_url 更新记录）
+            self.db.update_parse_item_by_detail_url(item)
+        except Exception as e:
+            log.warning("更新详情到数据库异常 (%s): %s", detail_url, e)
 
         return {
             "detail_url": item.detail_url,
